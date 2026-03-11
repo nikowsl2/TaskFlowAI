@@ -7,15 +7,15 @@ import { useChatStore } from '@/store/chatStore'
 function TypingIndicator() {
   return (
     <div className="flex items-end gap-2">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-2">
-        <div className="h-2 w-2 rounded-full bg-primary/60" />
+      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-2 font-mono text-[8px] text-muted-foreground">
+        AI
       </div>
       <div className="flex items-center gap-1 rounded-2xl rounded-bl-sm bg-surface px-4 py-2.5">
-        {[0, 0.2, 0.4].map((delay) => (
+        {[0, 0.2, 0.4].map((d) => (
           <div
-            key={delay}
+            key={d}
             className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground/50"
-            style={{ animationDelay: `${delay}s` }}
+            style={{ animationDelay: `${d}s` }}
           />
         ))}
       </div>
@@ -27,22 +27,17 @@ function MessageBubble({ role, content }: { role: string; content: string }) {
   const isUser = role === 'user'
   return (
     <div className={cn('flex items-end gap-2', isUser && 'flex-row-reverse')}>
-      {/* Avatar */}
       <div
         className={cn(
-          'flex h-7 w-7 shrink-0 items-center justify-center rounded-full font-mono text-[9px] font-500 uppercase tracking-widest',
-          isUser
-            ? 'bg-primary/20 text-primary'
-            : 'bg-surface-2 text-muted-foreground'
+          'flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-mono text-[8px]',
+          isUser ? 'bg-primary/20 text-primary' : 'bg-surface-2 text-muted-foreground'
         )}
       >
         {isUser ? 'You' : 'AI'}
       </div>
-
-      {/* Bubble */}
       <div
         className={cn(
-          'max-w-[75%] px-4 py-2.5 text-sm leading-relaxed',
+          'max-w-[78%] px-3.5 py-2 text-sm leading-relaxed',
           isUser
             ? 'rounded-2xl rounded-br-sm bg-primary text-primary-foreground'
             : 'rounded-2xl rounded-bl-sm bg-surface text-foreground'
@@ -56,12 +51,18 @@ function MessageBubble({ role, content }: { role: string; content: string }) {
 
 const SUGGESTIONS = [
   'Add a high-priority task: Review Q3 report',
-  'List all my tasks',
+  'List all my current tasks',
   'Complete the most recent task',
-  'Create a task due tomorrow: Team standup',
+  'Create subtask under task #1',
 ]
 
-export default function ChatPanel({ onSwitchMode }: { onSwitchMode?: () => void }) {
+interface ChatPanelProps {
+  onSwitchMode?: () => void
+  onClose?: () => void
+  floating?: boolean
+}
+
+export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanelProps) {
   const qc = useQueryClient()
   const { messages, isLoading, addMessage, updateLastAssistantMessage, setMessages, setLoading } =
     useChatStore()
@@ -83,6 +84,9 @@ export default function ChatPanel({ onSwitchMode }: { onSwitchMode?: () => void 
     const msg = (text ?? input).trim()
     if (!msg || isLoading) return
     setInput('')
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+    }
 
     addMessage({ id: Date.now().toString(), role: 'user', content: msg })
     addMessage({ id: (Date.now() + 1).toString(), role: 'assistant', content: '' })
@@ -132,16 +136,19 @@ export default function ChatPanel({ onSwitchMode }: { onSwitchMode?: () => void 
     }
   }
 
-  const isEmpty = messages.length === 0
-
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-5 py-3">
+      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
         <div className="flex items-center gap-2">
-          <div className={cn('h-2 w-2 rounded-full', isLoading ? 'animate-pulse bg-primary' : 'bg-primary/40')} />
+          <div
+            className={cn(
+              'h-1.5 w-1.5 rounded-full transition-colors',
+              isLoading ? 'animate-pulse bg-primary' : 'bg-primary/40'
+            )}
+          />
           <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-            {isLoading ? 'Thinking...' : 'AI Assistant'}
+            {floating ? 'AI Chat' : isLoading ? 'Thinking…' : 'AI Assistant'}
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -155,23 +162,32 @@ export default function ChatPanel({ onSwitchMode }: { onSwitchMode?: () => void 
           )}
           <button
             onClick={() => chatApi.clearHistory().then(() => setMessages([]))}
-            className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/50 transition-colors hover:text-muted-foreground"
+            className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/40 transition-colors hover:text-muted-foreground"
           >
             Clear
           </button>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="text-muted-foreground/40 transition-colors hover:text-muted-foreground"
+              aria-label="Close"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-5 py-4">
-        {isEmpty ? (
+      <div className="flex-1 overflow-y-auto px-4 py-3">
+        {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center">
-            <div className="mb-2 font-mono text-3xl text-muted-foreground/10">◆</div>
-            <p className="mb-1 text-sm font-500 text-muted-foreground/60">AI Task Assistant</p>
-            <p className="mb-8 text-xs text-muted-foreground/30">
-              Tell me what to do with your tasks
-            </p>
-            <div className="grid w-full max-w-sm gap-2">
+            <div className="mb-1.5 font-mono text-2xl text-muted-foreground/10">◆</div>
+            <p className="mb-1 text-xs font-semibold text-muted-foreground/50">AI Task Assistant</p>
+            <p className="mb-5 text-xs text-muted-foreground/30">Tell me what to do with your tasks</p>
+            <div className={cn('grid w-full gap-1.5', floating ? 'max-w-xs' : 'max-w-sm')}>
               {SUGGESTIONS.map((s) => (
                 <button
                   key={s}
@@ -184,7 +200,7 @@ export default function ChatPanel({ onSwitchMode }: { onSwitchMode?: () => void 
             </div>
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-3">
             {messages.map((msg) =>
               msg.role === 'assistant' && msg.content === '' && isLoading ? (
                 <TypingIndicator key={msg.id} />
@@ -198,48 +214,44 @@ export default function ChatPanel({ onSwitchMode }: { onSwitchMode?: () => void 
       </div>
 
       {/* Input */}
-      <div className="border-t border-border px-5 py-3">
-        <div className="flex items-end gap-3 rounded-xl border border-border bg-surface px-4 py-3 transition-all focus-within:border-primary/40">
+      <div className="border-t border-border px-4 py-3">
+        <div className="flex items-end gap-2 rounded-xl border border-border bg-surface px-3 py-2.5 transition-colors focus-within:border-primary/40">
           <textarea
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask me to manage your tasks..."
+            placeholder="Ask me to manage your tasks…"
             rows={1}
             disabled={isLoading}
             className="flex-1 resize-none bg-transparent text-sm leading-relaxed outline-none placeholder:text-muted-foreground/30 disabled:opacity-50"
-            style={{ maxHeight: '120px' }}
+            style={{ maxHeight: '100px' }}
             onInput={(e) => {
               const t = e.currentTarget
               t.style.height = 'auto'
-              t.style.height = `${Math.min(t.scrollHeight, 120)}px`
+              t.style.height = `${Math.min(t.scrollHeight, 100)}px`
             }}
           />
           <button
             onClick={() => handleSend()}
             disabled={isLoading || !input.trim()}
             className={cn(
-              'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-all',
+              'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-all',
               !isLoading && input.trim()
                 ? 'bg-primary text-primary-foreground hover:opacity-90'
-                : 'bg-muted text-muted-foreground/40'
+                : 'bg-muted text-muted-foreground/30'
             )}
           >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path
-                d="M1 7h12M7 1l6 6-6 6"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+              <path d="M1 6.5h11M6.5 1l5.5 5.5-5.5 5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
         </div>
-        <p className="mt-1.5 text-center font-mono text-[9px] text-muted-foreground/25">
-          Enter to send · Shift+Enter for newline
-        </p>
+        {!floating && (
+          <p className="mt-1 text-center font-mono text-[9px] text-muted-foreground/20">
+            Enter to send · Shift+Enter for newline
+          </p>
+        )}
       </div>
     </div>
   )

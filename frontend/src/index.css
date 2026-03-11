@@ -2,7 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+/* ── Dark theme (default) ──────────────────────────────────────────────────── */
+:root,
+html[data-theme='dark'] {
   --background: 240 15% 6%;
   --surface: 240 14% 10%;
   --surface-2: 240 12% 14%;
@@ -13,6 +15,22 @@
   --muted: 240 12% 16%;
   --muted-foreground: 240 10% 52%;
   --border: 240 10% 18%;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Light theme ───────────────────────────────────────────────────────────── */
+html[data-theme='light'] {
+  --background: 40 25% 97%;
+  --surface: 0 0% 100%;
+  --surface-2: 40 15% 94%;
+  --foreground: 240 15% 12%;
+  --primary: 38 80% 42%;
+  --primary-foreground: 0 0% 100%;
+  --primary-dim: 33 65% 30%;
+  --muted: 40 12% 91%;
+  --muted-foreground: 240 8% 48%;
+  --border: 40 12% 85%;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
 }
 
 * {
@@ -31,40 +49,21 @@ body {
   font-family: 'Syne', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: hsl(var(--border));
-  border-radius: 2px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground));
-}
+/* ── Scrollbar ──────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
 
-/* Priority indicator dots */
-.dot-high  { background-color: hsl(0 72% 56%); }
+/* ── Priority dots ──────────────────────────────────────────────────────────── */
+.dot-high   { background-color: hsl(0 72% 56%); }
 .dot-medium { background-color: hsl(38 95% 54%); }
-.dot-low   { background-color: hsl(158 64% 42%); }
+.dot-low    { background-color: hsl(158 64% 42%); }
 
-/* Noise overlay for depth */
-.noise::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
-  pointer-events: none;
-  border-radius: inherit;
-}
-
-/* Mode toggle pill */
+/* ── Mode toggle pill ───────────────────────────────────────────────────────── */
 .mode-toggle {
   position: relative;
   display: flex;
@@ -101,14 +100,11 @@ body {
   white-space: nowrap;
 }
 
-.mode-toggle-btn.active {
-  color: hsl(var(--primary-foreground));
-}
+.mode-toggle-btn.active   { color: hsl(var(--primary-foreground)); }
+.mode-toggle-btn.inactive { color: hsl(var(--muted-foreground)); }
+.mode-toggle-btn.inactive:hover { color: hsl(var(--foreground)); }
 
-.mode-toggle-btn.inactive {
-  color: hsl(var(--muted-foreground));
-}
-
-.mode-toggle-btn.inactive:hover {
-  color: hsl(var(--foreground));
+/* ── Floating chat shadow ───────────────────────────────────────────────────── */
+.float-shadow {
+  box-shadow: var(--shadow);
 }

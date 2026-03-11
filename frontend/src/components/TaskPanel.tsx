@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils'
 import type { Task } from '@/lib/api'
 import { useCreateTask, useDeleteTask, useTasks, useUpdateTask } from '@/hooks/useTasks'
 
-type Mode = 'manual' | 'compact'
+type Mode = 'manual' | 'menu'
 type Filter = 'all' | 'active' | 'done' | 'high'
 
 const PRIORITY_DOT: Record<string, string> = {
@@ -12,132 +12,7 @@ const PRIORITY_DOT: Record<string, string> = {
   low: 'dot-low',
 }
 
-const PRIORITY_LABEL: Record<string, string> = {
-  high: 'H',
-  medium: 'M',
-  low: 'L',
-}
-
-// ── Compact item (AI sidebar mode) ───────────────────────────────────────────
-
-function CompactTaskItem({ task }: { task: Task }) {
-  const updateTask = useUpdateTask()
-  const deleteTask = useDeleteTask()
-
-  return (
-    <div className="group">
-      <div className="flex items-center gap-2.5 rounded px-2 py-1.5 transition-colors hover:bg-surface-2">
-        <button
-          onClick={() => updateTask.mutate({ id: task.id, data: { completed: !task.completed } })}
-          className={cn(
-            'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border transition-all',
-            task.completed
-              ? 'border-primary/50 bg-primary/20 text-primary'
-              : 'border-border text-transparent hover:border-primary/50'
-          )}
-        >
-          <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-            <path d="M1 4l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-
-        <span className={cn('flex-1 truncate text-xs', task.completed && 'text-muted-foreground line-through')}>
-          {task.title}
-        </span>
-
-        <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', PRIORITY_DOT[task.priority])} />
-
-        <button
-          onClick={() => deleteTask.mutate(task.id)}
-          className="shrink-0 text-muted-foreground/0 transition-all group-hover:text-muted-foreground hover:!text-red-400"
-        >
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-            <path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-          </svg>
-        </button>
-      </div>
-
-      {task.subtasks?.map((sub) => (
-        <div key={sub.id} className="ml-4 border-l border-border/50 pl-2">
-          <CompactTaskItem task={sub} />
-        </div>
-      ))}
-    </div>
-  )
-}
-
-// ── Full task card (manual mode) ─────────────────────────────────────────────
-
-function TaskCard({ task }: { task: Task }) {
-  const updateTask = useUpdateTask()
-  const deleteTask = useDeleteTask()
-
-  return (
-    <div
-      className={cn(
-        'group relative rounded-lg border border-border bg-surface p-3.5 transition-all hover:border-border/80 hover:bg-surface-2',
-        task.completed && 'opacity-60'
-      )}
-    >
-      {/* Priority stripe */}
-      <div className={cn('absolute left-0 top-3.5 bottom-3.5 w-0.5 rounded-full', PRIORITY_DOT[task.priority])} />
-
-      <div className="ml-3 flex items-start gap-3">
-        <button
-          onClick={() => updateTask.mutate({ id: task.id, data: { completed: !task.completed } })}
-          className={cn(
-            'mt-0.5 flex h-4.5 h-[18px] w-[18px] shrink-0 items-center justify-center rounded border transition-all',
-            task.completed
-              ? 'border-primary/60 bg-primary/15 text-primary'
-              : 'border-border text-transparent hover:border-primary/60'
-          )}
-        >
-          <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
-            <path d="M1.5 4.5l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-
-        <div className="min-w-0 flex-1">
-          <p className={cn('text-sm font-500 leading-snug', task.completed && 'line-through text-muted-foreground')}>
-            {task.title}
-          </p>
-          {task.description && (
-            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{task.description}</p>
-          )}
-          {task.due_date && (
-            <p className="mt-1.5 font-mono text-[10px] text-primary/60">
-              DUE {new Date(task.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-            </p>
-          )}
-        </div>
-
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="font-mono text-[10px] font-500 tracking-wider text-muted-foreground/60">
-            {PRIORITY_LABEL[task.priority]}
-          </span>
-          <button
-            onClick={() => deleteTask.mutate(task.id)}
-            className="text-muted-foreground/0 transition-all group-hover:text-muted-foreground/40 hover:!text-red-400"
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      {task.subtasks?.length > 0 && (
-        <div className="ml-7 mt-2 space-y-1.5 border-l border-border/40 pl-3 pt-1">
-          {task.subtasks.map((sub) => (
-            <TaskCard key={sub.id} task={sub} />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ── Add task form ─────────────────────────────────────────────────────────────
+// ── Shared: Add task form ─────────────────────────────────────────────────────
 
 function AddTaskForm({ onClose, compact }: { onClose: () => void; compact?: boolean }) {
   const createTask = useCreateTask()
@@ -145,7 +20,7 @@ function AddTaskForm({ onClose, compact }: { onClose: () => void; compact?: bool
   const [description, setDescription] = useState('')
   const [priority, setPriority] = useState<'low' | 'medium' | 'high'>('medium')
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const submit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!title.trim()) return
     createTask.mutate(
@@ -156,48 +31,55 @@ function AddTaskForm({ onClose, compact }: { onClose: () => void; compact?: bool
 
   if (compact) {
     return (
-      <form onSubmit={handleSubmit} className="animate-fade-up px-2 pb-2">
+      <form onSubmit={submit} className="animate-fade-up border-b border-border px-3 py-2.5">
         <input
           autoFocus
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="Task title..."
           onKeyDown={(e) => e.key === 'Escape' && onClose()}
-          className="w-full rounded border border-primary/40 bg-surface-2 px-2.5 py-1.5 text-xs outline-none placeholder:text-muted-foreground/50 focus:border-primary/70"
+          placeholder="Task title…"
+          className="w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground/40"
         />
-        <div className="mt-1.5 flex gap-1.5">
+        <div className="mt-2 flex items-center gap-1.5">
           {(['low', 'medium', 'high'] as const).map((p) => (
             <button
               key={p}
               type="button"
               onClick={() => setPriority(p)}
               className={cn(
-                'flex-1 rounded py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
-                priority === p
-                  ? 'bg-primary/20 text-primary'
-                  : 'text-muted-foreground hover:text-foreground'
+                'rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider transition-all',
+                priority === p ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
               )}
             >
-              {p[0]}
+              {p}
             </button>
           ))}
-          <button type="submit" className="rounded bg-primary px-2 py-1 font-mono text-[10px] font-500 text-primary-foreground">
-            ↵
-          </button>
+          <div className="ml-auto flex gap-1.5">
+            <button type="button" onClick={onClose} className="font-mono text-[10px] text-muted-foreground/50 hover:text-muted-foreground">
+              esc
+            </button>
+            <button
+              type="submit"
+              disabled={!title.trim()}
+              className="rounded bg-primary px-2 py-0.5 font-mono text-[10px] font-bold text-primary-foreground disabled:opacity-40"
+            >
+              add
+            </button>
+          </div>
         </div>
       </form>
     )
   }
 
   return (
-    <form onSubmit={handleSubmit} className="animate-fade-up rounded-lg border border-primary/30 bg-surface p-4">
+    <form onSubmit={submit} className="animate-fade-up rounded-lg border border-primary/30 bg-surface p-4">
       <input
         autoFocus
         value={title}
         onChange={(e) => setTitle(e.target.value)}
-        placeholder="Task title..."
         onKeyDown={(e) => e.key === 'Escape' && onClose()}
-        className="w-full bg-transparent text-sm font-500 outline-none placeholder:text-muted-foreground/40 focus:placeholder:text-muted-foreground/20"
+        placeholder="Task title…"
+        className="w-full bg-transparent text-sm font-semibold outline-none placeholder:text-muted-foreground/40"
       />
       <textarea
         value={description}
@@ -216,9 +98,7 @@ function AddTaskForm({ onClose, compact }: { onClose: () => void; compact?: bool
               onClick={() => setPriority(p)}
               className={cn(
                 'rounded px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
-                priority === p
-                  ? 'bg-primary/20 text-primary'
-                  : 'text-muted-foreground/50 hover:text-muted-foreground'
+                priority === p ? 'bg-primary/20 text-primary' : 'text-muted-foreground/40 hover:text-muted-foreground'
               )}
             >
               {p}
@@ -226,17 +106,13 @@ function AddTaskForm({ onClose, compact }: { onClose: () => void; compact?: bool
           ))}
         </div>
         <div className="ml-auto flex gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded px-3 py-1 text-xs text-muted-foreground hover:text-foreground"
-          >
+          <button type="button" onClick={onClose} className="rounded px-3 py-1 text-xs text-muted-foreground hover:text-foreground">
             Cancel
           </button>
           <button
             type="submit"
             disabled={!title.trim()}
-            className="rounded bg-primary px-4 py-1 text-xs font-600 text-primary-foreground disabled:opacity-40"
+            className="rounded bg-primary px-4 py-1 text-xs font-bold text-primary-foreground disabled:opacity-40"
           >
             Add Task
           </button>
@@ -246,12 +122,224 @@ function AddTaskForm({ onClose, compact }: { onClose: () => void; compact?: bool
   )
 }
 
+// ── Menu mode: accordion task item ────────────────────────────────────────────
+
+function MenuTaskItem({ task, expandedId, onExpand }: {
+  task: Task
+  expandedId: number | null
+  onExpand: (id: number | null) => void
+}) {
+  const updateTask = useUpdateTask()
+  const deleteTask = useDeleteTask()
+  const isOpen = expandedId === task.id
+
+  return (
+    <div className="border-b border-border/60 last:border-0">
+      {/* Row */}
+      <div
+        className={cn(
+          'flex cursor-pointer items-center gap-2.5 px-3 py-2.5 transition-colors hover:bg-surface-2',
+          isOpen && 'bg-surface-2'
+        )}
+        onClick={() => onExpand(isOpen ? null : task.id)}
+      >
+        {/* Checkbox – stop propagation so clicking doesn't toggle accordion */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            updateTask.mutate({ id: task.id, data: { completed: !task.completed } })
+          }}
+          className={cn(
+            'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-all',
+            task.completed
+              ? 'border-primary/50 bg-primary/15 text-primary'
+              : 'border-border text-transparent hover:border-primary/50'
+          )}
+        >
+          <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+            <path d="M1 4l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+
+        <span
+          className={cn(
+            'flex-1 truncate text-xs font-medium',
+            task.completed && 'text-muted-foreground line-through'
+          )}
+        >
+          {task.title}
+        </span>
+
+        <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', PRIORITY_DOT[task.priority])} />
+
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          fill="none"
+          className={cn('shrink-0 text-muted-foreground/40 transition-transform', isOpen && 'rotate-180')}
+        >
+          <path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </div>
+
+      {/* Expanded details */}
+      {isOpen && (
+        <div className="animate-fade-up border-t border-border/40 bg-surface-2 px-4 pb-3 pt-2.5">
+          {task.description && (
+            <p className="mb-2.5 text-xs leading-relaxed text-muted-foreground">{task.description}</p>
+          )}
+
+          {/* Priority selector */}
+          <div className="mb-2.5 flex items-center gap-2">
+            <span className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/40">Priority</span>
+            {(['low', 'medium', 'high'] as const).map((p) => (
+              <button
+                key={p}
+                onClick={() => updateTask.mutate({ id: task.id, data: { priority: p } })}
+                className={cn(
+                  'rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider transition-all',
+                  task.priority === p
+                    ? 'bg-primary/20 text-primary'
+                    : 'text-muted-foreground/40 hover:text-muted-foreground'
+                )}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+
+          {/* Due date */}
+          {task.due_date && (
+            <p className="mb-2.5 font-mono text-[10px] text-primary/60">
+              Due {new Date(task.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+            </p>
+          )}
+
+          {/* Subtasks */}
+          {task.subtasks?.length > 0 && (
+            <div className="mb-2.5 space-y-1 border-l-2 border-border/40 pl-3">
+              {task.subtasks.map((sub) => (
+                <SubtaskRow key={sub.id} task={sub} />
+              ))}
+            </div>
+          )}
+
+          {/* Delete */}
+          <button
+            onClick={() => {
+              deleteTask.mutate(task.id)
+              onExpand(null)
+            }}
+            className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/40 transition-colors hover:text-red-400"
+          >
+            Delete task
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SubtaskRow({ task }: { task: Task }) {
+  const updateTask = useUpdateTask()
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        onClick={() => updateTask.mutate({ id: task.id, data: { completed: !task.completed } })}
+        className={cn(
+          'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-all',
+          task.completed ? 'border-primary/50 bg-primary/15 text-primary' : 'border-border text-transparent hover:border-primary/50'
+        )}
+      >
+        <svg width="7" height="7" viewBox="0 0 7 7" fill="none">
+          <path d="M1 3.5l1.5 1.5 3.5-3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      <span className={cn('text-xs', task.completed && 'text-muted-foreground line-through')}>
+        {task.title}
+      </span>
+    </div>
+  )
+}
+
+// ── Manual mode: full task card ───────────────────────────────────────────────
+
+function TaskCard({ task }: { task: Task }) {
+  const updateTask = useUpdateTask()
+  const deleteTask = useDeleteTask()
+
+  return (
+    <div
+      className={cn(
+        'group relative rounded-lg border border-border bg-surface p-4 transition-all hover:border-border/60 hover:bg-surface-2',
+        task.completed && 'opacity-60'
+      )}
+    >
+      {/* Priority stripe */}
+      <div className={cn('absolute left-0 top-4 bottom-4 w-0.5 rounded-full', PRIORITY_DOT[task.priority])} />
+
+      <div className="ml-3.5 flex items-start gap-3">
+        <button
+          onClick={() => updateTask.mutate({ id: task.id, data: { completed: !task.completed } })}
+          className={cn(
+            'mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded border transition-all',
+            task.completed
+              ? 'border-primary/60 bg-primary/15 text-primary'
+              : 'border-border text-transparent hover:border-primary/60'
+          )}
+        >
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
+            <path d="M1.5 4.5l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+
+        <div className="min-w-0 flex-1">
+          <p className={cn('text-sm font-semibold leading-snug', task.completed && 'line-through text-muted-foreground')}>
+            {task.title}
+          </p>
+          {task.description && (
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{task.description}</p>
+          )}
+          {task.due_date && (
+            <p className="mt-1.5 font-mono text-[10px] text-primary/60">
+              DUE {new Date(task.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            </p>
+          )}
+          {task.subtasks?.length > 0 && (
+            <div className="mt-2 space-y-1 border-l-2 border-border/40 pl-3">
+              {task.subtasks.map((sub) => (
+                <SubtaskRow key={sub.id} task={sub} />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="font-mono text-[10px] font-bold tracking-wider text-muted-foreground/50 uppercase">
+            {task.priority[0]}
+          </span>
+          <button
+            onClick={() => deleteTask.mutate(task.id)}
+            className="text-transparent transition-all group-hover:text-muted-foreground/40 hover:!text-red-400"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── TaskPanel ─────────────────────────────────────────────────────────────────
 
 export default function TaskPanel({ mode }: { mode: Mode }) {
   const { data: tasks = [], isLoading } = useTasks()
   const [adding, setAdding] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
+  const [expandedId, setExpandedId] = useState<number | null>(null)
 
   const filtered = tasks.filter((t) => {
     if (filter === 'active') return !t.completed
@@ -264,26 +352,28 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
   const done = tasks.filter((t) => t.completed).length
   const progress = total > 0 ? Math.round((done / total) * 100) : 0
 
-  // ── COMPACT MODE (AI sidebar) ──────────────────────────────────────────────
-  if (mode === 'compact') {
+  // ── MENU MODE (AI sidebar) ────────────────────────────────────────────────
+  if (mode === 'menu') {
     return (
       <div className="flex h-full flex-col">
+        {/* Header */}
         <div className="border-b border-border px-3 py-2.5">
           <div className="flex items-center justify-between">
-            <span className="font-mono text-[10px] font-500 uppercase tracking-[0.12em] text-muted-foreground">
+            <span className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
               Tasks
             </span>
             <button
               onClick={() => setAdding((v) => !v)}
-              className="font-mono text-[10px] text-primary hover:text-primary/80"
+              className="font-mono text-[10px] text-primary transition-colors hover:text-primary/80"
             >
-              + NEW
+              {adding ? '✕ cancel' : '+ new'}
             </button>
           </div>
+
           {total > 0 && (
             <div className="mt-2">
               <div className="mb-1 flex justify-between font-mono text-[9px] text-muted-foreground/50">
-                <span>{done}/{total}</span>
+                <span>{done}/{total} done</span>
                 <span>{progress}%</span>
               </div>
               <div className="h-0.5 overflow-hidden rounded-full bg-border">
@@ -294,31 +384,53 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
               </div>
             </div>
           )}
+
+          {/* Filter tabs */}
+          <div className="mt-2 flex gap-0.5">
+            {(['all', 'active', 'done', 'high'] as Filter[]).map((f) => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={cn(
+                  'rounded px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider transition-all',
+                  filter === f ? 'bg-primary/15 text-primary' : 'text-muted-foreground/40 hover:text-muted-foreground'
+                )}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-2 py-2">
-          {adding && <AddTaskForm onClose={() => setAdding(false)} compact />}
+        {/* Add form */}
+        {adding && <AddTaskForm onClose={() => setAdding(false)} compact />}
+
+        {/* Menu list */}
+        <div className="flex-1 overflow-y-auto">
           {isLoading ? (
-            <div className="mt-4 flex justify-center">
-              <div className="h-3 w-3 animate-spin rounded-full border border-primary border-t-transparent" />
+            <div className="flex justify-center py-6">
+              <div className="h-3.5 w-3.5 animate-spin rounded-full border border-primary border-t-transparent" />
             </div>
           ) : filtered.length === 0 ? (
-            <p className="mt-6 text-center font-mono text-[10px] text-muted-foreground/40">
-              no tasks yet
+            <p className="py-8 text-center font-mono text-[10px] text-muted-foreground/30">
+              {filter === 'all' ? 'no tasks yet' : `no ${filter} tasks`}
             </p>
           ) : (
-            <div className="space-y-0.5">
-              {filtered.map((task) => (
-                <CompactTaskItem key={task.id} task={task} />
-              ))}
-            </div>
+            filtered.map((task) => (
+              <MenuTaskItem
+                key={task.id}
+                task={task}
+                expandedId={expandedId}
+                onExpand={setExpandedId}
+              />
+            ))
           )}
         </div>
       </div>
     )
   }
 
-  // ── MANUAL MODE (full) ─────────────────────────────────────────────────────
+  // ── MANUAL MODE (full board) ──────────────────────────────────────────────
   const FILTERS: { key: Filter; label: string }[] = [
     { key: 'all', label: 'All' },
     { key: 'active', label: 'Active' },
@@ -332,7 +444,7 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
       <div className="border-b border-border px-6 py-4">
         <div className="flex items-end justify-between">
           <div>
-            <h1 className="text-xl font-800 tracking-tight">Task Board</h1>
+            <h1 className="text-xl font-extrabold tracking-tight">Task Board</h1>
             <p className="mt-0.5 font-mono text-xs text-muted-foreground">
               {done} of {total} completed
             </p>
@@ -340,10 +452,8 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
           <button
             onClick={() => setAdding((v) => !v)}
             className={cn(
-              'flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-600 transition-all',
-              adding
-                ? 'bg-surface-2 text-muted-foreground'
-                : 'bg-primary text-primary-foreground hover:opacity-90'
+              'flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-all',
+              adding ? 'bg-surface-2 text-muted-foreground' : 'bg-primary text-primary-foreground hover:opacity-90'
             )}
           >
             <span className="text-base leading-none">{adding ? '−' : '+'}</span>
@@ -351,10 +461,10 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
           </button>
         </div>
 
-        {/* Progress bar */}
+        {/* Progress */}
         {total > 0 && (
           <div className="mt-4">
-            <div className="h-1 overflow-hidden rounded-full bg-border">
+            <div className="h-0.5 overflow-hidden rounded-full bg-border">
               <div
                 className="h-full rounded-full bg-primary transition-all duration-700"
                 style={{ width: `${progress}%` }}
@@ -377,17 +487,12 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
                 key={key}
                 onClick={() => setFilter(key)}
                 className={cn(
-                  'flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-500 transition-all',
-                  filter === key
-                    ? 'bg-primary/15 text-primary'
-                    : 'text-muted-foreground hover:text-foreground'
+                  'flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all',
+                  filter === key ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
                 )}
               >
                 {label}
-                <span className={cn(
-                  'font-mono text-[10px]',
-                  filter === key ? 'text-primary/70' : 'text-muted-foreground/50'
-                )}>
+                <span className={cn('font-mono text-[10px]', filter === key ? 'text-primary/70' : 'text-muted-foreground/40')}>
                   {count}
                 </span>
               </button>
