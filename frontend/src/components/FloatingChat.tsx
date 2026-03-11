@@ -20,7 +20,7 @@ export default function FloatingChat() {
       <button
         onClick={() => setOpen((v) => !v)}
         aria-label={open ? 'Close chat' : 'Open AI chat'}
-        className="flex h-13 w-13 h-[52px] w-[52px] items-center justify-center rounded-full bg-primary text-primary-foreground float-shadow transition-all hover:scale-105 active:scale-95"
+        className="flex h-[52px] w-[52px] items-center justify-center rounded-full bg-primary text-primary-foreground float-shadow transition-all hover:scale-105 active:scale-95"
       >
         {open ? (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none">

@@ -2,9 +2,11 @@ import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import type { Task } from '@/lib/api'
 import { useCreateTask, useDeleteTask, useTasks, useUpdateTask } from '@/hooks/useTasks'
+import CalendarView from './CalendarView'
 
 type Mode = 'manual' | 'menu'
 type Filter = 'all' | 'active' | 'done' | 'high'
+type View = 'list' | 'calendar'
 
 const PRIORITY_DOT: Record<string, string> = {
   high: 'dot-high',
@@ -19,13 +21,19 @@ function AddTaskForm({ onClose, compact }: { onClose: () => void; compact?: bool
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [priority, setPriority] = useState<'low' | 'medium' | 'high'>('medium')
+  const [dueDate, setDueDate] = useState('')
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!title.trim()) return
     createTask.mutate(
-      { title: title.trim(), description: description.trim() || undefined, priority },
-      { onSuccess: () => { setTitle(''); setDescription(''); onClose() } }
+      {
+        title: title.trim(),
+        description: description.trim() || undefined,
+        priority,
+        due_date: dueDate ? `${dueDate}T00:00:00` : undefined,
+      },
+      { onSuccess: () => { setTitle(''); setDescription(''); setDueDate(''); onClose() } }
     )
   }
 
@@ -67,6 +75,15 @@ function AddTaskForm({ onClose, compact }: { onClose: () => void; compact?: bool
             </button>
           </div>
         </div>
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <span className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/40">Due</span>
+          <input
+            type="date"
+            value={dueDate}
+            onChange={(e) => setDueDate(e.target.value)}
+            className="rounded border border-border/60 bg-transparent px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground outline-none [color-scheme:dark]"
+          />
+        </div>
       </form>
     )
   }
@@ -88,7 +105,7 @@ function AddTaskForm({ onClose, compact }: { onClose: () => void; compact?: bool
         rows={2}
         className="mt-2 w-full resize-none bg-transparent text-xs text-muted-foreground outline-none placeholder:text-muted-foreground/30"
       />
-      <div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
         <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/50">Priority</span>
         <div className="flex gap-1">
           {(['low', 'medium', 'high'] as const).map((p) => (
@@ -104,6 +121,15 @@ function AddTaskForm({ onClose, compact }: { onClose: () => void; compact?: bool
               {p}
             </button>
           ))}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/50">Due</span>
+          <input
+            type="date"
+            value={dueDate}
+            onChange={(e) => setDueDate(e.target.value)}
+            className="rounded border border-border/60 bg-surface px-2 py-0.5 font-mono text-[10px] text-muted-foreground outline-none [color-scheme:dark]"
+          />
         </div>
         <div className="ml-auto flex gap-2">
           <button type="button" onClick={onClose} className="rounded px-3 py-1 text-xs text-muted-foreground hover:text-foreground">
@@ -210,11 +236,18 @@ function MenuTaskItem({ task, expandedId, onExpand }: {
           </div>
 
           {/* Due date */}
-          {task.due_date && (
-            <p className="mb-2.5 font-mono text-[10px] text-primary/60">
-              Due {new Date(task.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-            </p>
-          )}
+          <div className="mb-2.5 flex items-center gap-2">
+            <span className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/40">Due</span>
+            <input
+              type="date"
+              defaultValue={task.due_date ? task.due_date.split('T')[0] : ''}
+              onChange={(e) => {
+                const val = e.target.value
+                updateTask.mutate({ id: task.id, data: { due_date: val ? `${val}T00:00:00` : null } })
+              }}
+              className="rounded border border-border/60 bg-transparent px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground outline-none [color-scheme:dark]"
+            />
+          </div>
 
           {/* Subtasks */}
           {task.subtasks?.length > 0 && (
@@ -340,6 +373,7 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
   const [adding, setAdding] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
   const [expandedId, setExpandedId] = useState<number | null>(null)
+  const [view, setView] = useState<View>('list')
 
   const filtered = tasks.filter((t) => {
     if (filter === 'active') return !t.completed
@@ -449,85 +483,117 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
               {done} of {total} completed
             </p>
           </div>
-          <button
-            onClick={() => setAdding((v) => !v)}
-            className={cn(
-              'flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-all',
-              adding ? 'bg-surface-2 text-muted-foreground' : 'bg-primary text-primary-foreground hover:opacity-90'
-            )}
-          >
-            <span className="text-base leading-none">{adding ? '−' : '+'}</span>
-            {adding ? 'Cancel' : 'New Task'}
-          </button>
-        </div>
-
-        {/* Progress */}
-        {total > 0 && (
-          <div className="mt-4">
-            <div className="h-0.5 overflow-hidden rounded-full bg-border">
-              <div
-                className="h-full rounded-full bg-primary transition-all duration-700"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Filters */}
-        <div className="mt-3 flex gap-1">
-          {FILTERS.map(({ key, label }) => {
-            const count =
-              key === 'all' ? total
-              : key === 'active' ? tasks.filter((t) => !t.completed).length
-              : key === 'done' ? done
-              : tasks.filter((t) => t.priority === 'high').length
-
-            return (
+          <div className="flex items-center gap-2">
+            {/* View toggle */}
+            <div className="flex rounded-lg border border-border p-0.5">
               <button
-                key={key}
-                onClick={() => setFilter(key)}
+                onClick={() => setView('list')}
                 className={cn(
-                  'flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all',
-                  filter === key ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
+                  'rounded-md px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
+                  view === 'list' ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
                 )}
               >
-                {label}
-                <span className={cn('font-mono text-[10px]', filter === key ? 'text-primary/70' : 'text-muted-foreground/40')}>
-                  {count}
-                </span>
+                List
               </button>
-            )
-          })}
+              <button
+                onClick={() => setView('calendar')}
+                className={cn(
+                  'rounded-md px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
+                  view === 'calendar' ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
+                )}
+              >
+                Calendar
+              </button>
+            </div>
+
+            {view === 'list' && (
+              <button
+                onClick={() => setAdding((v) => !v)}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-all',
+                  adding ? 'bg-surface-2 text-muted-foreground' : 'bg-primary text-primary-foreground hover:opacity-90'
+                )}
+              >
+                <span className="text-base leading-none">{adding ? '−' : '+'}</span>
+                {adding ? 'Cancel' : 'New Task'}
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Progress + Filters — only in list view */}
+        {view === 'list' && (
+          <>
+            {total > 0 && (
+              <div className="mt-4">
+                <div className="h-0.5 overflow-hidden rounded-full bg-border">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all duration-700"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            <div className="mt-3 flex gap-1">
+              {FILTERS.map(({ key, label }) => {
+                const count =
+                  key === 'all' ? total
+                  : key === 'active' ? tasks.filter((t) => !t.completed).length
+                  : key === 'done' ? done
+                  : tasks.filter((t) => t.priority === 'high').length
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setFilter(key)}
+                    className={cn(
+                      'flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all',
+                      filter === key ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {label}
+                    <span className={cn('font-mono text-[10px]', filter === key ? 'text-primary/70' : 'text-muted-foreground/40')}>
+                      {count}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </>
+        )}
       </div>
+
+      {/* Calendar view */}
+      {view === 'calendar' && <CalendarView />}
 
       {/* Task list */}
-      <div className="flex-1 overflow-y-auto px-6 py-4">
-        {adding && (
-          <div className="mb-4">
-            <AddTaskForm onClose={() => setAdding(false)} />
-          </div>
-        )}
+      {view === 'list' && (
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          {adding && (
+            <div className="mb-4">
+              <AddTaskForm onClose={() => setAdding(false)} />
+            </div>
+          )}
 
-        {isLoading ? (
-          <div className="flex h-24 items-center justify-center">
-            <div className="h-4 w-4 animate-spin rounded-full border border-primary border-t-transparent" />
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="flex h-32 flex-col items-center justify-center gap-2">
-            <div className="font-mono text-2xl text-muted-foreground/20">∅</div>
-            <p className="text-xs text-muted-foreground/40">
-              {filter === 'all' ? 'No tasks yet' : `No ${filter} tasks`}
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {filtered.map((task) => (
-              <TaskCard key={task.id} task={task} />
-            ))}
-          </div>
-        )}
-      </div>
+          {isLoading ? (
+            <div className="flex h-24 items-center justify-center">
+              <div className="h-4 w-4 animate-spin rounded-full border border-primary border-t-transparent" />
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex h-32 flex-col items-center justify-center gap-2">
+              <div className="font-mono text-2xl text-muted-foreground/20">∅</div>
+              <p className="text-xs text-muted-foreground/40">
+                {filter === 'all' ? 'No tasks yet' : `No ${filter} tasks`}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filtered.map((task) => (
+                <TaskCard key={task.id} task={task} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

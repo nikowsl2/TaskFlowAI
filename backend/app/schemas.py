@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -8,10 +9,13 @@ from pydantic import BaseModel
 # ── Task schemas ──────────────────────────────────────────────────────────────
 
 
+Priority = Literal["low", "medium", "high"]
+
+
 class TaskCreate(BaseModel):
     title: str
     description: str | None = None
-    priority: str = "medium"
+    priority: Priority = "medium"
     due_date: datetime | None = None
     parent_id: int | None = None
 
@@ -20,7 +24,7 @@ class TaskUpdate(BaseModel):
     title: str | None = None
     description: str | None = None
     completed: bool | None = None
-    priority: str | None = None
+    priority: Priority | None = None
     due_date: datetime | None = None
 
 
@@ -29,7 +33,7 @@ class TaskOut(BaseModel):
     title: str
     description: str | None
     completed: bool
-    priority: str
+    priority: Priority
     due_date: datetime | None
     parent_id: int | None
     created_at: datetime

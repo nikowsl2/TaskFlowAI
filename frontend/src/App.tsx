@@ -89,11 +89,13 @@ export default function App() {
 
       {/* Content */}
       <div className="relative flex flex-1 overflow-hidden">
-        {mode === 'manual' ? (
+        {mode === 'manual' && (
           <div key="manual" className="flex flex-1 animate-slide-in-left overflow-hidden">
             <TaskPanel mode="manual" />
           </div>
-        ) : (
+        )}
+
+        {mode === 'ai' && (
           <div key="ai" className="flex flex-1 animate-slide-in-right overflow-hidden">
             {/* Accordion task menu */}
             <aside className="flex w-64 shrink-0 flex-col border-r border-border">

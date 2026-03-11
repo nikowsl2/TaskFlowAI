@@ -30,7 +30,7 @@ export interface TaskUpdate {
   description?: string
   completed?: boolean
   priority?: 'low' | 'medium' | 'high'
-  due_date?: string
+  due_date?: string | null
 }
 
 export interface Message {
