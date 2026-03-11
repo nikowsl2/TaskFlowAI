@@ -4,65 +4,96 @@ import { cn } from '@/lib/utils'
 import { chatApi } from '@/lib/api'
 import { useChatStore } from '@/store/chatStore'
 
-function MessageBubble({ role, content }: { role: string; content: string }) {
-  const isUser = role === 'user'
+function TypingIndicator() {
   return (
-    <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
-      <div
-        className={cn(
-          'max-w-[80%] rounded-2xl px-4 py-2.5 text-sm',
-          isUser
-            ? 'bg-primary text-primary-foreground'
-            : 'bg-secondary text-secondary-foreground'
-        )}
-      >
-        <pre className="whitespace-pre-wrap font-sans">{content}</pre>
+    <div className="flex items-end gap-2">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-2">
+        <div className="h-2 w-2 rounded-full bg-primary/60" />
+      </div>
+      <div className="flex items-center gap-1 rounded-2xl rounded-bl-sm bg-surface px-4 py-2.5">
+        {[0, 0.2, 0.4].map((delay) => (
+          <div
+            key={delay}
+            className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground/50"
+            style={{ animationDelay: `${delay}s` }}
+          />
+        ))}
       </div>
     </div>
   )
 }
 
-export default function ChatPanel() {
+function MessageBubble({ role, content }: { role: string; content: string }) {
+  const isUser = role === 'user'
+  return (
+    <div className={cn('flex items-end gap-2', isUser && 'flex-row-reverse')}>
+      {/* Avatar */}
+      <div
+        className={cn(
+          'flex h-7 w-7 shrink-0 items-center justify-center rounded-full font-mono text-[9px] font-500 uppercase tracking-widest',
+          isUser
+            ? 'bg-primary/20 text-primary'
+            : 'bg-surface-2 text-muted-foreground'
+        )}
+      >
+        {isUser ? 'You' : 'AI'}
+      </div>
+
+      {/* Bubble */}
+      <div
+        className={cn(
+          'max-w-[75%] px-4 py-2.5 text-sm leading-relaxed',
+          isUser
+            ? 'rounded-2xl rounded-br-sm bg-primary text-primary-foreground'
+            : 'rounded-2xl rounded-bl-sm bg-surface text-foreground'
+        )}
+      >
+        <pre className="whitespace-pre-wrap font-sans text-[13px]">{content}</pre>
+      </div>
+    </div>
+  )
+}
+
+const SUGGESTIONS = [
+  'Add a high-priority task: Review Q3 report',
+  'List all my tasks',
+  'Complete the most recent task',
+  'Create a task due tomorrow: Team standup',
+]
+
+export default function ChatPanel({ onSwitchMode }: { onSwitchMode?: () => void }) {
   const qc = useQueryClient()
   const { messages, isLoading, addMessage, updateLastAssistantMessage, setMessages, setLoading } =
     useChatStore()
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // Load history on mount
   useEffect(() => {
     chatApi.history().then((hist) => {
-      setMessages(
-        hist.map((m) => ({ id: String(m.id), role: m.role, content: m.content }))
-      )
+      setMessages(hist.map((m) => ({ id: String(m.id), role: m.role, content: m.content })))
     })
   }, [setMessages])
 
-  // Scroll to bottom on new messages
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const handleSend = async () => {
-    const text = input.trim()
-    if (!text || isLoading) return
+  const handleSend = async (text?: string) => {
+    const msg = (text ?? input).trim()
+    if (!msg || isLoading) return
     setInput('')
 
-    // Add user message
-    addMessage({ id: Date.now().toString(), role: 'user', content: text })
-
-    // Placeholder for streaming assistant message
-    const assistantId = (Date.now() + 1).toString()
-    addMessage({ id: assistantId, role: 'assistant', content: '' })
+    addMessage({ id: Date.now().toString(), role: 'user', content: msg })
+    addMessage({ id: (Date.now() + 1).toString(), role: 'assistant', content: '' })
     setLoading(true)
 
     try {
       const res = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: text }),
+        body: JSON.stringify({ content: msg }),
       })
-
       if (!res.body) throw new Error('No response body')
 
       const reader = res.body.getReader()
@@ -72,10 +103,7 @@ export default function ChatPanel() {
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-
-        const chunk = decoder.decode(value, { stream: true })
-        const lines = chunk.split('\n')
-
+        const lines = decoder.decode(value, { stream: true }).split('\n')
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
           try {
@@ -86,13 +114,11 @@ export default function ChatPanel() {
             } else if (data.type === 'done') {
               qc.invalidateQueries({ queryKey: ['tasks'] })
             }
-          } catch {
-            // ignore parse errors
-          }
+          } catch { /* ignore */ }
         }
       }
     } catch (err) {
-      updateLastAssistantMessage('Sorry, something went wrong. Please try again.')
+      updateLastAssistantMessage('Something went wrong. Check that the backend is running and an API key is set.')
       console.error(err)
     } finally {
       setLoading(false)
@@ -106,51 +132,114 @@ export default function ChatPanel() {
     }
   }
 
+  const isEmpty = messages.length === 0
+
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <h2 className="font-semibold">AI Assistant</h2>
-        <button
-          onClick={() => {
-            chatApi.clearHistory().then(() => setMessages([]))
-          }}
-          className="text-xs text-muted-foreground hover:text-foreground"
-        >
-          Clear
-        </button>
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-border px-5 py-3">
+        <div className="flex items-center gap-2">
+          <div className={cn('h-2 w-2 rounded-full', isLoading ? 'animate-pulse bg-primary' : 'bg-primary/40')} />
+          <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+            {isLoading ? 'Thinking...' : 'AI Assistant'}
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          {onSwitchMode && (
+            <button
+              onClick={onSwitchMode}
+              className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/50 transition-colors hover:text-muted-foreground"
+            >
+              ← Tasks
+            </button>
+          )}
+          <button
+            onClick={() => chatApi.clearHistory().then(() => setMessages([]))}
+            className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/50 transition-colors hover:text-muted-foreground"
+          >
+            Clear
+          </button>
+        </div>
       </div>
 
-      <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
-        {messages.length === 0 && (
-          <p className="mt-8 text-center text-sm text-muted-foreground">
-            Ask me to manage your tasks! e.g. "Add a high-priority task: Review Q3 Report"
-          </p>
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        {isEmpty ? (
+          <div className="flex h-full flex-col items-center justify-center">
+            <div className="mb-2 font-mono text-3xl text-muted-foreground/10">◆</div>
+            <p className="mb-1 text-sm font-500 text-muted-foreground/60">AI Task Assistant</p>
+            <p className="mb-8 text-xs text-muted-foreground/30">
+              Tell me what to do with your tasks
+            </p>
+            <div className="grid w-full max-w-sm gap-2">
+              {SUGGESTIONS.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => handleSend(s)}
+                  className="rounded-lg border border-border bg-surface px-3 py-2 text-left text-xs text-muted-foreground transition-all hover:border-primary/30 hover:bg-surface-2 hover:text-foreground"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {messages.map((msg) =>
+              msg.role === 'assistant' && msg.content === '' && isLoading ? (
+                <TypingIndicator key={msg.id} />
+              ) : (
+                <MessageBubble key={msg.id} role={msg.role} content={msg.content} />
+              )
+            )}
+          </div>
         )}
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} role={msg.role} content={msg.content} />
-        ))}
         <div ref={bottomRef} />
       </div>
 
-      <div className="border-t border-border px-4 py-3">
-        <div className="flex gap-2">
+      {/* Input */}
+      <div className="border-t border-border px-5 py-3">
+        <div className="flex items-end gap-3 rounded-xl border border-border bg-surface px-4 py-3 transition-all focus-within:border-primary/40">
           <textarea
+            ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Message AI... (Enter to send)"
-            rows={2}
+            placeholder="Ask me to manage your tasks..."
+            rows={1}
             disabled={isLoading}
-            className="flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50"
+            className="flex-1 resize-none bg-transparent text-sm leading-relaxed outline-none placeholder:text-muted-foreground/30 disabled:opacity-50"
+            style={{ maxHeight: '120px' }}
+            onInput={(e) => {
+              const t = e.currentTarget
+              t.style.height = 'auto'
+              t.style.height = `${Math.min(t.scrollHeight, 120)}px`
+            }}
           />
           <button
-            onClick={handleSend}
+            onClick={() => handleSend()}
             disabled={isLoading || !input.trim()}
-            className="self-end rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            className={cn(
+              'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-all',
+              !isLoading && input.trim()
+                ? 'bg-primary text-primary-foreground hover:opacity-90'
+                : 'bg-muted text-muted-foreground/40'
+            )}
           >
-            {isLoading ? '...' : 'Send'}
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path
+                d="M1 7h12M7 1l6 6-6 6"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </button>
         </div>
+        <p className="mt-1.5 text-center font-mono text-[9px] text-muted-foreground/25">
+          Enter to send · Shift+Enter for newline
+        </p>
       </div>
     </div>
   )

@@ -3,18 +3,112 @@
 @tailwind utilities;
 
 :root {
-  --background: 220 20% 97%;
-  --foreground: 220 15% 10%;
-  --primary: 221 83% 53%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 220 14% 90%;
-  --secondary-foreground: 220 15% 20%;
-  --muted: 220 14% 93%;
-  --muted-foreground: 220 10% 50%;
-  --border: 220 13% 85%;
+  --background: 240 15% 6%;
+  --surface: 240 14% 10%;
+  --surface-2: 240 12% 14%;
+  --foreground: 240 20% 93%;
+  --primary: 38 95% 54%;
+  --primary-foreground: 240 15% 6%;
+  --primary-dim: 33 65% 34%;
+  --muted: 240 12% 16%;
+  --muted-foreground: 240 10% 52%;
+  --border: 240 10% 18%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
 }
 
 body {
-  @apply bg-background text-foreground;
-  font-family: system-ui, -apple-system, sans-serif;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: 'Syne', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground));
+}
+
+/* Priority indicator dots */
+.dot-high  { background-color: hsl(0 72% 56%); }
+.dot-medium { background-color: hsl(38 95% 54%); }
+.dot-low   { background-color: hsl(158 64% 42%); }
+
+/* Noise overlay for depth */
+.noise::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* Mode toggle pill */
+.mode-toggle {
+  position: relative;
+  display: flex;
+  background: hsl(var(--surface));
+  border: 1px solid hsl(var(--border));
+  border-radius: 9999px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.mode-toggle-indicator {
+  position: absolute;
+  top: 3px;
+  height: calc(100% - 6px);
+  background: hsl(var(--primary));
+  border-radius: 9999px;
+  transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 0;
+}
+
+.mode-toggle-btn {
+  position: relative;
+  z-index: 1;
+  padding: 5px 16px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: 9999px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: color 0.25s ease;
+  white-space: nowrap;
+}
+
+.mode-toggle-btn.active {
+  color: hsl(var(--primary-foreground));
+}
+
+.mode-toggle-btn.inactive {
+  color: hsl(var(--muted-foreground));
+}
+
+.mode-toggle-btn.inactive:hover {
+  color: hsl(var(--foreground));
 }
