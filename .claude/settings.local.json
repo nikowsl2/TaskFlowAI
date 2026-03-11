@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init:*)",
+      "Bash(cd /Users/shilinwang/Desktop/TaskFlowAI/frontend && npm install 2>&1 | tail -5)"
+    ]
+  }
+}
