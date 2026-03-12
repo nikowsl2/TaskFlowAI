@@ -16,7 +16,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
-from app.models import Task
+from app.models import CalendarEvent, EmailDraft, Task
 
 Priority = Literal["low", "medium", "high"]
 
@@ -51,6 +51,46 @@ class DeleteTaskInput(BaseModel):
 
 class CompleteTaskInput(BaseModel):
     task_id: int
+
+
+class AddCalendarEventInput(BaseModel):
+    title: str
+    start_time: str  # ISO 8601 datetime, e.g. "2025-06-02T10:00:00"
+    end_time: str | None = None  # ISO 8601 datetime
+    description: str | None = None
+
+
+class ListCalendarEventsInput(BaseModel):
+    pass
+
+
+class UpdateCalendarEventInput(BaseModel):
+    event_id: int
+    title: str | None = None
+    start_time: str | None = None  # ISO 8601 datetime
+    end_time: str | None = None  # ISO 8601 datetime; send "" to clear
+    description: str | None = None
+
+
+class DeleteCalendarEventInput(BaseModel):
+    event_id: int
+
+
+class DraftEmailInput(BaseModel):
+    to: str  # comma-separated recipients
+    subject: str
+    body: str
+
+
+class UpdateEmailDraftInput(BaseModel):
+    draft_id: int
+    to: str | None = None
+    subject: str | None = None
+    body: str | None = None
+
+
+class GetEmailDraftInput(BaseModel):
+    draft_id: int | None = None  # None = latest
 
 
 # ── Output model ──────────────────────────────────────────────────────────────
@@ -92,7 +132,11 @@ TOOL_DEFINITIONS = [
                     },
                     "due_date": {
                         "type": "string",
-                        "description": "Optional deadline in ISO 8601 format, e.g. '2025-06-01'",
+                        "description": (
+                            "Optional deadline in ISO 8601 format YYYY-MM-DD, e.g. '2026-03-18'. "
+                            "You MUST resolve relative dates like 'next Wednesday' to a concrete date "
+                            "before calling this tool. Never pass relative date strings."
+                        ),
                     },
                     "parent_id": {
                         "type": "integer",
@@ -140,8 +184,9 @@ TOOL_DEFINITIONS = [
                     "due_date": {
                         "type": "string",
                         "description": (
-                            "New deadline in ISO 8601 format, e.g. '2025-06-01'. "
-                            "Send an empty string to remove the deadline."
+                            "New deadline in ISO 8601 format YYYY-MM-DD, e.g. '2026-03-18'. "
+                            "Always resolve relative dates to a concrete date before calling. "
+                            "Send an empty string '' to remove the deadline."
                         ),
                     },
                     "completed": {
@@ -178,6 +223,69 @@ TOOL_DEFINITIONS = [
                     "task_id": {"type": "integer", "description": "ID of the task to complete"},
                 },
                 "required": ["task_id"],
+            },
+        },
+    },
+    # Calendar event tools disabled — calendar reflects tasks only for now
+    {
+        "type": "function",
+        "function": {
+            "name": "draft_email",
+            "description": (
+                "Create a new email draft with recipient(s), subject, and body. "
+                "Use when the user asks you to write, compose, or draft an email. "
+                "The draft is saved and displayed to the user for review and copying. "
+                "After drafting, also create any tasks or calendar events implied by the email content."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "to": {
+                        "type": "string",
+                        "description": "Recipient email address(es), comma-separated if multiple. "
+                        "If no email address is known, use the person's name.",
+                    },
+                    "subject": {"type": "string", "description": "Email subject line"},
+                    "body": {"type": "string", "description": "Full email body text"},
+                },
+                "required": ["to", "subject", "body"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_email_draft",
+            "description": (
+                "Update an existing email draft. Use when the user asks to revise, refine, "
+                "edit, or adjust a previously created draft. Only send the fields to change."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "draft_id": {"type": "integer", "description": "ID of the draft to update"},
+                    "to": {"type": "string", "description": "New recipient(s)"},
+                    "subject": {"type": "string", "description": "New subject line"},
+                    "body": {"type": "string", "description": "New email body"},
+                },
+                "required": ["draft_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_email_draft",
+            "description": "Retrieve an existing email draft to review its current content before editing.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "draft_id": {
+                        "type": "integer",
+                        "description": "ID of the draft to retrieve. Omit to get the most recent draft.",
+                    },
+                },
+                "required": [],
             },
         },
     },
@@ -308,6 +416,154 @@ def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
             data={"id": task.id, "title": task.title},
         )
 
+    if name == "add_calendar_event":
+        inp = AddCalendarEventInput.model_validate(args)
+        start = _parse_datetime(inp.start_time)
+        if start is None:
+            return ToolResult(ok=False, message=f"Invalid start_time: '{inp.start_time}'")
+        end = _parse_datetime(inp.end_time) if inp.end_time else None
+        ev = CalendarEvent(
+            title=inp.title,
+            description=inp.description,
+            start_time=start,
+            end_time=end,
+        )
+        db.add(ev)
+        db.commit()
+        db.refresh(ev)
+        return ToolResult(
+            ok=True,
+            message=f"Added calendar event #{ev.id}: '{ev.title}' at {ev.start_time.isoformat()}",
+            data={"id": ev.id, "title": ev.title, "start_time": ev.start_time.isoformat()},
+        )
+
+    if name == "list_calendar_events":
+        ListCalendarEventsInput.model_validate(args)
+        events = db.query(CalendarEvent).order_by(CalendarEvent.start_time.asc()).all()
+        event_list = [
+            {
+                "id": e.id,
+                "title": e.title,
+                "start_time": e.start_time.isoformat(),
+                "end_time": e.end_time.isoformat() if e.end_time else None,
+                "description": e.description,
+            }
+            for e in events
+        ]
+        return ToolResult(
+            ok=True,
+            message=f"Found {len(events)} calendar event(s)",
+            data={"events": event_list},
+        )
+
+    if name == "update_calendar_event":
+        inp = UpdateCalendarEventInput.model_validate(args)
+        ev = db.get(CalendarEvent, inp.event_id)
+        if not ev:
+            return ToolResult(ok=False, message=f"Event #{inp.event_id} not found.")
+        updated_fields: list[str] = []
+        if inp.title is not None:
+            ev.title = inp.title
+            updated_fields.append("title")
+        if inp.description is not None:
+            ev.description = inp.description
+            updated_fields.append("description")
+        if inp.start_time is not None:
+            parsed = _parse_datetime(inp.start_time)
+            if parsed is None:
+                return ToolResult(ok=False, message=f"Invalid start_time: '{inp.start_time}'")
+            ev.start_time = parsed
+            updated_fields.append("start_time")
+        if inp.end_time is not None:
+            ev.end_time = None if inp.end_time == "" else _parse_datetime(inp.end_time)
+            updated_fields.append("end_time")
+        db.commit()
+        return ToolResult(
+            ok=True,
+            message=f"Updated event #{ev.id}: '{ev.title}' (fields: {', '.join(updated_fields)})",
+            data={"id": ev.id, "title": ev.title, "updated_fields": updated_fields},
+        )
+
+    if name == "delete_calendar_event":
+        inp = DeleteCalendarEventInput.model_validate(args)
+        ev = db.get(CalendarEvent, inp.event_id)
+        if not ev:
+            return ToolResult(ok=False, message=f"Event #{inp.event_id} not found.")
+        title = ev.title
+        db.delete(ev)
+        db.commit()
+        return ToolResult(
+            ok=True,
+            message=f"Deleted calendar event #{inp.event_id}: '{title}'",
+            data={"id": inp.event_id},
+        )
+
+    if name == "draft_email":
+        inp = DraftEmailInput.model_validate(args)
+        draft = EmailDraft(to_field=inp.to, subject=inp.subject, body=inp.body)
+        db.add(draft)
+        db.commit()
+        db.refresh(draft)
+        return ToolResult(
+            ok=True,
+            message=f"Email draft #{draft.id} created: '{draft.subject}'",
+            data={
+                "id": draft.id,
+                "to_field": draft.to_field,
+                "subject": draft.subject,
+                "body": draft.body,
+                "created_at": draft.created_at.isoformat(),
+                "updated_at": draft.updated_at.isoformat(),
+            },
+        )
+
+    if name == "update_email_draft":
+        inp = UpdateEmailDraftInput.model_validate(args)
+        draft = db.get(EmailDraft, inp.draft_id)
+        if not draft:
+            return ToolResult(ok=False, message=f"Draft #{inp.draft_id} not found.")
+        if inp.to is not None:
+            draft.to_field = inp.to
+        if inp.subject is not None:
+            draft.subject = inp.subject
+        if inp.body is not None:
+            draft.body = inp.body
+        db.commit()
+        db.refresh(draft)
+        return ToolResult(
+            ok=True,
+            message=f"Email draft #{draft.id} updated",
+            data={
+                "id": draft.id,
+                "to_field": draft.to_field,
+                "subject": draft.subject,
+                "body": draft.body,
+                "created_at": draft.created_at.isoformat(),
+                "updated_at": draft.updated_at.isoformat(),
+            },
+        )
+
+    if name == "get_email_draft":
+        inp = GetEmailDraftInput.model_validate(args)
+        if inp.draft_id:
+            draft = db.get(EmailDraft, inp.draft_id)
+        else:
+            draft = db.query(EmailDraft).order_by(EmailDraft.created_at.desc()).first()
+        if not draft:
+            return ToolResult(ok=False, message="No email draft found.")
+        return ToolResult(
+            ok=True,
+            message=f"Email draft #{draft.id}: '{draft.subject}'",
+            data={
+                "id": draft.id,
+                "to_field": draft.to_field,
+                "subject": draft.subject,
+                "body": draft.body,
+                "created_at": draft.created_at.isoformat(),
+                "updated_at": draft.updated_at.isoformat(),
+            },
+        )
+
     return ToolResult(ok=False, message=f"Unknown tool: '{name}'")
 
 
@@ -321,8 +577,17 @@ def _parse_date(value: str | None) -> datetime | None:
     try:
         return datetime.fromisoformat(value)
     except ValueError:
-        # Try date-only format
         try:
             return datetime.strptime(value, "%Y-%m-%d")
         except ValueError:
             return None
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    """Parse an ISO datetime string; returns None on failure or empty input."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None

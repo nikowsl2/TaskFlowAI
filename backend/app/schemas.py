@@ -60,3 +60,84 @@ class MessageOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ── Calendar Event schemas ────────────────────────────────────────────────────
+
+
+class CalendarEventCreate(BaseModel):
+    title: str
+    description: str | None = None
+    start_time: datetime
+    end_time: datetime | None = None
+
+
+class CalendarEventUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+
+
+class CalendarEventOut(BaseModel):
+    id: int
+    title: str
+    description: str | None
+    start_time: datetime
+    end_time: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Email Draft schemas ───────────────────────────────────────────────────────
+
+
+class EmailDraftCreate(BaseModel):
+    to_field: str
+    subject: str
+    body: str
+
+
+class EmailDraftUpdate(BaseModel):
+    to_field: str | None = None
+    subject: str | None = None
+    body: str | None = None
+
+
+class EmailDraftOut(BaseModel):
+    id: int
+    to_field: str
+    subject: str
+    body: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Meeting Note schemas ───────────────────────────────────────────────────────
+
+
+class MeetingNoteCreate(BaseModel):
+    title: str
+    summary: str
+    content: str
+    meeting_time: datetime
+
+
+class MeetingNoteUpdate(BaseModel):
+    title: str | None = None
+    summary: str | None = None
+    meeting_time: datetime | None = None
+
+
+class MeetingNoteOut(BaseModel):
+    id: int
+    title: str
+    summary: str
+    content: str
+    meeting_time: datetime
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

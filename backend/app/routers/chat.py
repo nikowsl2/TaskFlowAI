@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.ai.agent import run_agent
+from app import log_store
 from app.database import get_db
 from app.models import Message
 from app.schemas import ChatMessage, MessageOut
@@ -24,6 +25,11 @@ async def stream_chat(payload: ChatMessage, db: Session = Depends(get_db)):
         db.query(Message).order_by(Message.created_at.desc()).limit(20).all()[::-1]
     )
     messages = [{"role": m.role, "content": m.content} for m in history]
+
+    log_store.log(log_store.CHAT_REQUEST, {
+        "message": payload.content,
+        "history_len": len(messages),
+    })
 
     async def event_stream():
         full_response = ""

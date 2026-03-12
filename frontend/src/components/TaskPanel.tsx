@@ -3,10 +3,12 @@ import { cn } from '@/lib/utils'
 import type { Task } from '@/lib/api'
 import { useCreateTask, useDeleteTask, useTasks, useUpdateTask } from '@/hooks/useTasks'
 import CalendarView from './CalendarView'
+import MeetingNotesView from './MeetingNotesView'
+import EmailView from './EmailView'
 
 type Mode = 'manual' | 'menu'
 type Filter = 'all' | 'active' | 'done' | 'high'
-type View = 'list' | 'calendar'
+type View = 'list' | 'calendar' | 'notes' | 'email'
 
 const PRIORITY_DOT: Record<string, string> = {
   high: 'dot-high',
@@ -478,9 +480,15 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
       <div className="border-b border-border px-6 py-4">
         <div className="flex items-end justify-between">
           <div>
-            <h1 className="text-xl font-extrabold tracking-tight">Task Board</h1>
+            <h1 className="text-xl font-extrabold tracking-tight">
+              {view === 'notes' ? 'Meeting Notes' : view === 'email' ? 'Email Drafts' : 'Task Board'}
+            </h1>
             <p className="mt-0.5 font-mono text-xs text-muted-foreground">
-              {done} of {total} completed
+              {view === 'notes'
+                ? 'Extract tasks from your notes'
+                : view === 'email'
+                  ? 'AI-generated drafts ready to copy'
+                  : `${done} of ${total} completed`}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -504,9 +512,27 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
               >
                 Calendar
               </button>
+              <button
+                onClick={() => setView('notes')}
+                className={cn(
+                  'rounded-md px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
+                  view === 'notes' ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
+                )}
+              >
+                Notes
+              </button>
+              <button
+                onClick={() => setView('email')}
+                className={cn(
+                  'rounded-md px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
+                  view === 'email' ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
+                )}
+              >
+                Email
+              </button>
             </div>
 
-            {view === 'list' && (
+            {(view === 'list') && (
               <button
                 onClick={() => setAdding((v) => !v)}
                 className={cn(
@@ -564,6 +590,12 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
 
       {/* Calendar view */}
       {view === 'calendar' && <CalendarView />}
+
+      {/* Meeting notes view */}
+      {view === 'notes' && <MeetingNotesView />}
+
+      {/* Email drafts view */}
+      {view === 'email' && <EmailView />}
 
       {/* Task list */}
       {view === 'list' && (

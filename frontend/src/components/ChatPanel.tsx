@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { chatApi } from '@/lib/api'
 import { useChatStore } from '@/store/chatStore'
+import { EmailDraftCard, type EmailDraftData } from './EmailDraftCard'
 
 function TypingIndicator() {
   return (
@@ -24,6 +25,24 @@ function TypingIndicator() {
 }
 
 function MessageBubble({ role, content }: { role: string; content: string }) {
+  if (role === 'email_draft') {
+    try {
+      const draft: EmailDraftData = JSON.parse(content)
+      return (
+        <div className="flex items-end gap-2">
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-500/15 font-mono text-[8px] text-blue-400">
+            ✉
+          </div>
+          <div className="max-w-[85%] flex-1">
+            <EmailDraftCard draft={draft} />
+          </div>
+        </div>
+      )
+    } catch {
+      return null
+    }
+  }
+
   const isUser = role === 'user'
   return (
     <div className={cn('flex items-end gap-2', isUser && 'flex-row-reverse')}>
@@ -50,10 +69,10 @@ function MessageBubble({ role, content }: { role: string; content: string }) {
 }
 
 const SUGGESTIONS = [
+  'Process these notes: "Finish slides by Friday. Team sync next Monday at 10am."',
+  'Draft an email to Bob saying I\'m free for a sync tomorrow at 2pm',
   'Add a high-priority task: Review Q3 report',
-  'List all my current tasks',
-  'Complete the most recent task',
-  'Create subtask under task #1',
+  'Schedule a team meeting for tomorrow at 2pm',
 ]
 
 interface ChatPanelProps {
@@ -67,6 +86,7 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
   const { messages, isLoading, addMessage, updateLastAssistantMessage, setMessages, setLoading } =
     useChatStore()
   const [input, setInput] = useState('')
+  const [statusText, setStatusText] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -103,20 +123,37 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let accumulated = ''
+      let sseBuffer = ''
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        const lines = decoder.decode(value, { stream: true }).split('\n')
-        for (const line of lines) {
+        sseBuffer += decoder.decode(value, { stream: true })
+        // SSE events are delimited by double-newline; split on that boundary
+        const events = sseBuffer.split('\n\n')
+        // Keep the last (potentially incomplete) segment in the buffer
+        sseBuffer = events.pop() ?? ''
+        for (const event of events) {
+          const line = event.trim()
           if (!line.startsWith('data: ')) continue
           try {
             const data = JSON.parse(line.slice(6))
             if (data.type === 'text') {
+              setStatusText(null)
               accumulated += data.content
               updateLastAssistantMessage(accumulated)
+            } else if (data.type === 'status') {
+              setStatusText(data.content)
+            } else if (data.type === 'email_draft') {
+              addMessage({
+                id: `draft-${data.data.id}-${Date.now()}`,
+                role: 'email_draft',
+                content: JSON.stringify(data.data),
+              })
             } else if (data.type === 'done') {
               qc.invalidateQueries({ queryKey: ['tasks'] })
+              qc.invalidateQueries({ queryKey: ['events'] })
+              qc.invalidateQueries({ queryKey: ['drafts'] })
             }
           } catch { /* ignore */ }
         }
@@ -126,6 +163,7 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
       console.error(err)
     } finally {
       setLoading(false)
+      setStatusText(null)
     }
   }
 
@@ -148,7 +186,11 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
             )}
           />
           <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-            {floating ? 'AI Chat' : isLoading ? 'Thinking…' : 'AI Assistant'}
+            {floating
+              ? 'AI Chat'
+              : isLoading
+                ? (statusText ?? 'Thinking\u2026')
+                : 'AI Assistant'}
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -157,7 +199,7 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
               onClick={onSwitchMode}
               className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/50 transition-colors hover:text-muted-foreground"
             >
-              ← Tasks
+              \u2190 Tasks
             </button>
           )}
           <button
@@ -186,7 +228,7 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
           <div className="flex h-full flex-col items-center justify-center">
             <div className="mb-1.5 font-mono text-2xl text-muted-foreground/10">◆</div>
             <p className="mb-1 text-xs font-semibold text-muted-foreground/50">AI Task Assistant</p>
-            <p className="mb-5 text-xs text-muted-foreground/30">Tell me what to do with your tasks</p>
+            <p className="mb-5 text-xs text-muted-foreground/30">Manage tasks or paste meeting notes</p>
             <div className={cn('grid w-full gap-1.5', floating ? 'max-w-xs' : 'max-w-sm')}>
               {SUGGESTIONS.map((s) => (
                 <button
@@ -221,7 +263,7 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask me to manage your tasks…"
+            placeholder="Ask me to manage tasks or process meeting notes\u2026"
             rows={1}
             disabled={isLoading}
             className="flex-1 resize-none bg-transparent text-sm leading-relaxed outline-none placeholder:text-muted-foreground/30 disabled:opacity-50"

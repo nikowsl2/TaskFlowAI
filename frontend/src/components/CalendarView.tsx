@@ -11,7 +11,6 @@ const MONTH_NAMES = [
 ]
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-// Parse ISO date string to local Date (avoids UTC timezone shift on date-only strings)
 function parseTaskDate(iso: string): Date {
   const [y, m, d] = iso.split('T')[0].split('-').map(Number)
   return new Date(y, m - 1, d)
@@ -96,7 +95,6 @@ function MonthView({
 
   return (
     <div className="flex-1 overflow-auto px-4 py-3">
-      {/* Weekday headers */}
       <div className="mb-1 grid grid-cols-7 gap-1">
         {WEEKDAY_SHORT.map((d) => (
           <div
@@ -108,14 +106,13 @@ function MonthView({
         ))}
       </div>
 
-      {/* Day grid */}
       <div className="grid grid-cols-7 gap-1">
         {grid.map((day, i) => {
           const isCurrentMonth = day.getMonth() === month
           const isToday = isSameDay(day, today)
           const dayTasks = tasksOnDay(tasks, day)
-          const MAX_CHIPS = 3
-          const extra = dayTasks.length - MAX_CHIPS
+          const MAX_ITEMS = 3
+          const extra = dayTasks.length - MAX_ITEMS
 
           return (
             <div
@@ -140,7 +137,7 @@ function MonthView({
                 {day.getDate()}
               </div>
               <div className="space-y-0.5">
-                {dayTasks.slice(0, MAX_CHIPS).map((t) => (
+                {dayTasks.slice(0, MAX_ITEMS).map((t) => (
                   <TaskChip key={t.id} task={t} />
                 ))}
                 {extra > 0 && (
@@ -157,7 +154,15 @@ function MonthView({
 
 // ── WEEK VIEW ─────────────────────────────────────────────────────────────────
 
-function WeekView({ tasks, current, today }: { tasks: Task[]; current: Date; today: Date }) {
+function WeekView({
+  tasks,
+  current,
+  today,
+}: {
+  tasks: Task[]
+  current: Date
+  today: Date
+}) {
   const days = useMemo(() => {
     const start = startOfWeek(current)
     return Array.from({ length: 7 }, (_, i) => addDays(start, i))
@@ -171,7 +176,6 @@ function WeekView({ tasks, current, today }: { tasks: Task[]; current: Date; tod
 
         return (
           <div key={i} className={cn('flex min-w-0 flex-1 flex-col', isToday && 'bg-primary/5')}>
-            {/* Day header */}
             <div className={cn('border-b border-border px-2 py-2.5 text-center', isToday && 'border-primary/30')}>
               <div className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/50">
                 {WEEKDAY_SHORT[day.getDay()]}
@@ -185,8 +189,6 @@ function WeekView({ tasks, current, today }: { tasks: Task[]; current: Date; tod
                 {day.getDate()}
               </div>
             </div>
-
-            {/* Tasks */}
             <div className="flex-1 space-y-1 overflow-y-auto p-1.5">
               {dayTasks.map((t) => (
                 <TaskChip key={t.id} task={t} />
@@ -201,7 +203,15 @@ function WeekView({ tasks, current, today }: { tasks: Task[]; current: Date; tod
 
 // ── DAY VIEW ──────────────────────────────────────────────────────────────────
 
-function DayView({ tasks, current, today }: { tasks: Task[]; current: Date; today: Date }) {
+function DayView({
+  tasks,
+  current,
+  today,
+}: {
+  tasks: Task[]
+  current: Date
+  today: Date
+}) {
   const updateTask = useUpdateTask()
   const isToday = isSameDay(current, today)
   const dayTasks = useMemo(() => tasksOnDay(tasks, current), [tasks, current])
@@ -319,65 +329,43 @@ export default function CalendarView() {
   const headerLabel = (() => {
     if (scale === 'day') {
       return current.toLocaleDateString('en-US', {
-        weekday: 'long',
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric',
+        weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
       })
     } else if (scale === 'week') {
       const start = startOfWeek(current)
       const end = addDays(start, 6)
       if (start.getMonth() === end.getMonth()) {
-        return `${MONTH_NAMES[start.getMonth()]} ${start.getDate()}–${end.getDate()}, ${start.getFullYear()}`
+        return `${MONTH_NAMES[start.getMonth()]} ${start.getDate()}\u2013${end.getDate()}, ${start.getFullYear()}`
       }
-      return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+      return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} \u2013 ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
     }
     return `${MONTH_NAMES[current.getMonth()]} ${current.getFullYear()}`
   })()
 
   const noDeadlineCount = allTasks.filter((t) => !t.due_date && !t.completed).length
 
-  const handleDayClick = (day: Date) => {
-    setCurrent(day)
-    setScale('day')
-  }
-
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-6 py-3">
         <div className="flex items-center gap-2">
-          {/* Prev */}
           <button
             onClick={() => navigate(-1)}
             className="flex h-7 w-7 items-center justify-center rounded-lg border border-border text-muted-foreground transition-all hover:border-primary/40 hover:text-foreground"
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path
-                d="M7.5 9L4.5 6l3-3"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
+              <path d="M7.5 9L4.5 6l3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
 
           <span className="min-w-[220px] text-center text-sm font-semibold">{headerLabel}</span>
 
-          {/* Next */}
           <button
             onClick={() => navigate(1)}
             className="flex h-7 w-7 items-center justify-center rounded-lg border border-border text-muted-foreground transition-all hover:border-primary/40 hover:text-foreground"
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path
-                d="M4.5 3l3 3-3 3"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
+              <path d="M4.5 3l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
 
@@ -389,7 +377,6 @@ export default function CalendarView() {
           </button>
         </div>
 
-        {/* Scale toggle */}
         <div className="flex rounded-lg border border-border p-0.5">
           {(['day', 'week', 'month'] as Scale[]).map((s) => (
             <button
@@ -397,9 +384,7 @@ export default function CalendarView() {
               onClick={() => setScale(s)}
               className={cn(
                 'rounded-md px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
-                scale === s
-                  ? 'bg-primary/20 text-primary'
-                  : 'text-muted-foreground/50 hover:text-muted-foreground'
+                scale === s ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
               )}
             >
               {s}
@@ -411,7 +396,7 @@ export default function CalendarView() {
       {/* View content */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {scale === 'month' && (
-          <MonthView tasks={tasksWithDeadline} current={current} today={today} onDayClick={handleDayClick} />
+          <MonthView tasks={tasksWithDeadline} current={current} today={today} onDayClick={(d) => { setCurrent(d); setScale('day') }} />
         )}
         {scale === 'week' && (
           <WeekView tasks={tasksWithDeadline} current={current} today={today} />
@@ -421,7 +406,6 @@ export default function CalendarView() {
         )}
       </div>
 
-      {/* Footer: tasks without deadline */}
       {noDeadlineCount > 0 && (
         <div className="border-t border-border px-6 py-2">
           <p className="font-mono text-[10px] text-muted-foreground/30">

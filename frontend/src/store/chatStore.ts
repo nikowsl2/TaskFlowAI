@@ -2,7 +2,7 @@ import { create } from 'zustand'
 
 export interface ChatMessage {
   id: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'email_draft'
   content: string
 }
 

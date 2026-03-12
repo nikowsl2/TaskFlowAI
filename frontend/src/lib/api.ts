@@ -33,6 +33,29 @@ export interface TaskUpdate {
   due_date?: string | null
 }
 
+export interface CalendarEvent {
+  id: number
+  title: string
+  description: string | null
+  start_time: string
+  end_time: string | null
+  created_at: string
+}
+
+export interface CalendarEventCreate {
+  title: string
+  description?: string
+  start_time: string
+  end_time?: string
+}
+
+export interface CalendarEventUpdate {
+  title?: string
+  description?: string
+  start_time?: string
+  end_time?: string | null
+}
+
 export interface Message {
   id: number
   role: 'user' | 'assistant'
@@ -48,6 +71,101 @@ export const tasksApi = {
   update: (id: number, data: TaskUpdate) =>
     api.patch<Task>(`/tasks/${id}`, data).then((r) => r.data),
   delete: (id: number) => api.delete(`/tasks/${id}`),
+}
+
+export const eventsApi = {
+  list: () => api.get<CalendarEvent[]>('/events/').then((r) => r.data),
+  create: (data: CalendarEventCreate) =>
+    api.post<CalendarEvent>('/events/', data).then((r) => r.data),
+  update: (id: number, data: CalendarEventUpdate) =>
+    api.patch<CalendarEvent>(`/events/${id}`, data).then((r) => r.data),
+  delete: (id: number) => api.delete(`/events/${id}`),
+}
+
+export interface TaskCandidate {
+  title: string
+  description: string | null
+  priority: 'low' | 'medium' | 'high'
+  due_date: string | null
+}
+
+export interface ExtractResponse {
+  title: string
+  summary: string
+  candidates: TaskCandidate[]
+}
+
+export interface MeetingNote {
+  id: number
+  title: string
+  summary: string
+  content: string
+  meeting_time: string
+  created_at: string
+}
+
+export interface MeetingNoteCreate {
+  title: string
+  summary: string
+  content: string
+  meeting_time: string
+}
+
+export interface MeetingNoteUpdate {
+  title?: string
+  summary?: string
+  meeting_time?: string
+}
+
+export const meetingApi = {
+  extract: (content: string) =>
+    api.post<ExtractResponse>('/meeting/extract', { content }).then((r) => r.data),
+  parseFile: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api
+      .post<{ text: string }>('/meeting/parse-file', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      .then((r) => r.data)
+  },
+}
+
+export const notesApi = {
+  list: () => api.get<MeetingNote[]>('/notes/').then((r) => r.data),
+  create: (data: MeetingNoteCreate) => api.post<MeetingNote>('/notes/', data).then((r) => r.data),
+  update: (id: number, data: MeetingNoteUpdate) =>
+    api.patch<MeetingNote>(`/notes/${id}`, data).then((r) => r.data),
+  delete: (id: number) => api.delete(`/notes/${id}`),
+}
+
+export interface EmailDraft {
+  id: number
+  to_field: string
+  subject: string
+  body: string
+  created_at: string
+  updated_at: string
+}
+
+export interface EmailDraftCreate {
+  to_field: string
+  subject: string
+  body: string
+}
+
+export interface EmailDraftUpdate {
+  to_field?: string
+  subject?: string
+  body?: string
+}
+
+export const emailDraftsApi = {
+  list: () => api.get<EmailDraft[]>('/drafts/').then((r) => r.data),
+  create: (data: EmailDraftCreate) => api.post<EmailDraft>('/drafts/', data).then((r) => r.data),
+  update: (id: number, data: EmailDraftUpdate) =>
+    api.patch<EmailDraft>(`/drafts/${id}`, data).then((r) => r.data),
+  delete: (id: number) => api.delete(`/drafts/${id}`),
 }
 
 export const chatApi = {

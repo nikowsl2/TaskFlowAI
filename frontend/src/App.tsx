@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import ChatPanel from './components/ChatPanel'
+import DebugPanel from './components/DebugPanel'
 import FloatingChat from './components/FloatingChat'
 import TaskPanel from './components/TaskPanel'
 import { useThemeStore } from './store/themeStore'
@@ -111,6 +112,9 @@ export default function App() {
         {/* Floating chat — only in manual mode */}
         {mode === 'manual' && <FloatingChat />}
       </div>
+
+      {/* Debug panel — always available */}
+      <DebugPanel />
     </div>
   )
 }

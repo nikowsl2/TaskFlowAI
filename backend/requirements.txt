@@ -6,3 +6,5 @@ sqlalchemy==2.0.36
 pydantic-settings==2.6.1
 python-dotenv==1.0.1
 httpx==0.28.1
+python-docx==1.1.2
+python-multipart==0.0.20
