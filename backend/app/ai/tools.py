@@ -16,7 +16,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
-from app.models import CalendarEvent, EmailDraft, Task
+from app.models import CalendarEvent, Document, EmailDraft, Task
 
 Priority = Literal["low", "medium", "high"]
 
@@ -91,6 +91,16 @@ class UpdateEmailDraftInput(BaseModel):
 
 class GetEmailDraftInput(BaseModel):
     draft_id: int | None = None  # None = latest
+
+
+class ListDocumentsInput(BaseModel):
+    pass  # no args
+
+
+class SearchDocumentsInput(BaseModel):
+    query: str
+    document_id: int | None = None
+    n_results: int = 5
 
 
 # ── Output model ──────────────────────────────────────────────────────────────
@@ -286,6 +296,46 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_documents",
+            "description": (
+                "List all uploaded documents with their IDs, filenames, file types, and AI summaries. "
+                "Call this first to discover what documents are available before searching."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_documents",
+            "description": (
+                "Retrieve semantically relevant text chunks from uploaded documents. "
+                "Use this to answer questions about document content. "
+                "Optionally filter by document_id to search a specific document."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query — be specific and focused",
+                    },
+                    "document_id": {
+                        "type": "integer",
+                        "description": "Optional: restrict search to a specific document by ID",
+                    },
+                    "n_results": {
+                        "type": "integer",
+                        "description": "Number of chunks to return (default 5, max 10)",
+                    },
+                },
+                "required": ["query"],
             },
         },
     },
@@ -562,6 +612,69 @@ def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
                 "created_at": draft.created_at.isoformat(),
                 "updated_at": draft.updated_at.isoformat(),
             },
+        )
+
+    if name == "list_documents":
+        ListDocumentsInput.model_validate(args)
+        docs = db.query(Document).order_by(Document.created_at.desc()).all()
+        doc_list = [
+            {
+                "id": d.id,
+                "filename": d.filename,
+                "file_type": d.file_type,
+                "summary": d.summary,
+                "char_count": d.char_count,
+                "chunk_count": d.chunk_count,
+            }
+            for d in docs
+        ]
+        return ToolResult(
+            ok=True,
+            message=f"Found {len(docs)} document(s)",
+            data={"documents": doc_list},
+        )
+
+    if name == "search_documents":
+        from app.ai.rag import smart_search
+
+        inp = SearchDocumentsInput.model_validate(args)
+        n = min(inp.n_results, 10)
+
+        # Validate document_id if provided — never trust the AI's guess
+        doc_summary = None
+        valid_doc_id = inp.document_id
+        if valid_doc_id is not None:
+            doc = db.get(Document, valid_doc_id)
+            if doc:
+                doc_summary = doc.summary
+            else:
+                # ID doesn't exist — fall back to searching all documents
+                valid_doc_id = None
+
+        results = smart_search(inp.query, valid_doc_id, n, doc_summary=doc_summary)
+
+        # If filtered search returned nothing, retry across all documents
+        if not results and valid_doc_id is not None:
+            results = smart_search(inp.query, None, n)
+
+        # Enrich results with filenames from SQL
+        doc_ids = {r["document_id"] for r in results if r.get("document_id")}
+        docs_by_id = {}
+        for did in doc_ids:
+            doc = db.get(Document, did)
+            if doc:
+                docs_by_id[did] = doc.filename
+
+        for r in results:
+            filename = docs_by_id.get(r.get("document_id"), "unknown")
+            r["filename"] = filename
+            page_num = r.pop("page_num", None)
+            r["source"] = f"Page {page_num} — {filename}" if page_num else filename
+
+        return ToolResult(
+            ok=True,
+            message=f"Found {len(results)} chunk(s) for query: '{inp.query}'",
+            data={"results": results},
         )
 
     return ToolResult(ok=False, message=f"Unknown tool: '{name}'")

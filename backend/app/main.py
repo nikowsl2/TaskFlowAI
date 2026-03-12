@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import Base, engine
-from app.routers import chat, email_drafts, events, logs, meeting, notes, tasks
+from app.routers import chat, documents, email_drafts, events, logs, meeting, notes, tasks
 
 
 @asynccontextmanager
@@ -32,6 +32,7 @@ app.include_router(meeting.router, prefix="/api")
 app.include_router(notes.router, prefix="/api")
 app.include_router(email_drafts.router, prefix="/api")
 app.include_router(logs.router, prefix="/api")
+app.include_router(documents.router, prefix="/api")
 
 
 @app.get("/api/health")

@@ -168,6 +168,26 @@ export const emailDraftsApi = {
   delete: (id: number) => api.delete(`/drafts/${id}`),
 }
 
+export interface Document {
+  id: number
+  filename: string
+  file_type: string
+  summary: string
+  char_count: number
+  chunk_count: number
+  created_at: string
+}
+
+export const docsApi = {
+  list: () => api.get<Document[]>('/documents/').then((r) => r.data),
+  upload: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post<Document>('/documents/upload', form).then((r) => r.data)
+  },
+  delete: (id: number) => api.delete(`/documents/${id}`),
+}
+
 export const chatApi = {
   history: () => api.get<Message[]>('/chat/history').then((r) => r.data),
   clearHistory: () => api.delete('/chat/history'),

@@ -21,6 +21,7 @@ TOOL_CALL = "tool_call"
 TOOL_RESULT = "tool_result"
 AGENT_DONE = "agent_done"
 AGENT_ERROR = "agent_error"
+QUERY_REWRITE = "query_rewrite"
 
 
 def _ensure_dir() -> None:

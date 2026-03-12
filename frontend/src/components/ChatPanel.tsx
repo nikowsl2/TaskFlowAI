@@ -9,7 +9,7 @@ function TypingIndicator() {
   return (
     <div className="flex items-end gap-2">
       <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-2 font-mono text-[8px] text-muted-foreground">
-        AI
+        TF
       </div>
       <div className="flex items-center gap-1 rounded-2xl rounded-bl-sm bg-surface px-4 py-2.5">
         {[0, 0.2, 0.4].map((d) => (
@@ -52,7 +52,7 @@ function MessageBubble({ role, content }: { role: string; content: string }) {
           isUser ? 'bg-primary/20 text-primary' : 'bg-surface-2 text-muted-foreground'
         )}
       >
-        {isUser ? 'You' : 'AI'}
+        {isUser ? 'You' : 'TF'}
       </div>
       <div
         className={cn(
@@ -187,10 +187,10 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
           />
           <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
             {floating
-              ? 'AI Chat'
+              ? 'TaskFlow'
               : isLoading
                 ? (statusText ?? 'Thinking\u2026')
-                : 'AI Assistant'}
+                : 'TaskFlow'}
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -199,7 +199,7 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
               onClick={onSwitchMode}
               className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/50 transition-colors hover:text-muted-foreground"
             >
-              \u2190 Tasks
+              ← Tasks
             </button>
           )}
           <button
@@ -227,7 +227,7 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center">
             <div className="mb-1.5 font-mono text-2xl text-muted-foreground/10">◆</div>
-            <p className="mb-1 text-xs font-semibold text-muted-foreground/50">AI Task Assistant</p>
+            <p className="mb-1 text-xs font-semibold text-muted-foreground/50">TaskFlow Assistant</p>
             <p className="mb-5 text-xs text-muted-foreground/30">Manage tasks or paste meeting notes</p>
             <div className={cn('grid w-full gap-1.5', floating ? 'max-w-xs' : 'max-w-sm')}>
               {SUGGESTIONS.map((s) => (

@@ -26,6 +26,8 @@ set or clear a deadline, or reopen a completed task
 - draft_email           — compose a new email draft (saved & displayed to user for copying)
 - update_email_draft    — revise an existing draft (call get_email_draft first if unsure of content)
 - get_email_draft       — retrieve a draft's current content
+- list_documents        — show all uploaded documents with IDs and AI summaries
+- search_documents      — retrieve semantically relevant text chunks from documents
 
 Rules:
 1. If the user refers to a task by name rather than ID, call list_tasks first to find the ID.
@@ -54,6 +56,19 @@ When the user asks you to write, draft, or compose an email:
 3. After the draft is created, briefly confirm: the draft is ready AND list any tasks you synced.
 4. When the user asks to refine or edit the draft, call get_email_draft first, then update_email_draft \
 with the revised version. Apply changes precisely — don't rewrite parts the user didn't ask to change.
+
+Document knowledge base:
+When the user asks about uploaded documents or their content:
+1. ALWAYS call list_documents first to discover document IDs and summaries. \
+NEVER guess or assume a document_id — IDs start at 1 and you must retrieve them.
+2. Identify the most relevant document(s) by their summary.
+3. Call search_documents with a focused query; pass the correct document_id from step 1.
+4. For cross-document questions, call search_documents multiple times across different docs.
+5. Synthesize the retrieved chunks into a clear answer. Always cite the source
+   field from each chunk (e.g. "Source: Page 4 — NVIDIAAn.pdf"). When quoting
+   directly, wrap the quote in quotation marks followed by the source.
+6. If no documents exist or no relevant chunks are found, say so honestly.
+7. For complex questions, try multiple query phrasings to improve recall.
 
 Email thread summarization:
 When the user pastes an email thread or asks you to analyze emails:
@@ -290,5 +305,7 @@ def _status_label(tool_name: str) -> str:
         "draft_email": "Drafting email\u2026",
         "update_email_draft": "Updating draft\u2026",
         "get_email_draft": "Loading draft\u2026",
+        "list_documents": "Reading document library\u2026",
+        "search_documents": "Searching documents\u2026",
     }
     return labels.get(tool_name, f"Running {tool_name}\u2026")

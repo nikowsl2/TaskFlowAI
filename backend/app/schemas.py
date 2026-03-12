@@ -116,6 +116,28 @@ class EmailDraftOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ── Document schemas ──────────────────────────────────────────────────────────
+
+
+class DocumentOut(BaseModel):
+    id: int
+    filename: str
+    file_type: str
+    summary: str
+    char_count: int
+    chunk_count: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DocumentSearchResult(BaseModel):
+    chunk_text: str
+    document_id: int
+    filename: str
+    score: float
+
+
 # ── Meeting Note schemas ───────────────────────────────────────────────────────
 
 

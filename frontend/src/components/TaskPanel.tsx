@@ -3,12 +3,13 @@ import { cn } from '@/lib/utils'
 import type { Task } from '@/lib/api'
 import { useCreateTask, useDeleteTask, useTasks, useUpdateTask } from '@/hooks/useTasks'
 import CalendarView from './CalendarView'
-import MeetingNotesView from './MeetingNotesView'
+import DocumentsView from './DocumentsView'
 import EmailView from './EmailView'
+import MeetingNotesView from './MeetingNotesView'
 
 type Mode = 'manual' | 'menu'
 type Filter = 'all' | 'active' | 'done' | 'high'
-type View = 'list' | 'calendar' | 'notes' | 'email'
+type View = 'list' | 'calendar' | 'notes' | 'email' | 'docs'
 
 const PRIORITY_DOT: Record<string, string> = {
   high: 'dot-high',
@@ -481,13 +482,21 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
         <div className="flex items-end justify-between">
           <div>
             <h1 className="text-xl font-extrabold tracking-tight">
-              {view === 'notes' ? 'Meeting Notes' : view === 'email' ? 'Email Drafts' : 'Task Board'}
+              {view === 'notes'
+              ? 'Meeting Notes'
+              : view === 'email'
+                ? 'Email Drafts'
+                : view === 'docs'
+                  ? 'Documents'
+                  : 'Task Board'}
             </h1>
             <p className="mt-0.5 font-mono text-xs text-muted-foreground">
               {view === 'notes'
                 ? 'Extract tasks from your notes'
                 : view === 'email'
-                  ? 'AI-generated drafts ready to copy'
+                ? 'AI-generated drafts ready to copy'
+                : view === 'docs'
+                  ? 'Upload and query your documents with AI'
                   : `${done} of ${total} completed`}
             </p>
           </div>
@@ -530,9 +539,18 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
               >
                 Email
               </button>
+              <button
+                onClick={() => setView('docs')}
+                className={cn(
+                  'rounded-md px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
+                  view === 'docs' ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
+                )}
+              >
+                Docs
+              </button>
             </div>
 
-            {(view === 'list') && (
+            {view === 'list' && (
               <button
                 onClick={() => setAdding((v) => !v)}
                 className={cn(
@@ -596,6 +614,9 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
 
       {/* Email drafts view */}
       {view === 'email' && <EmailView />}
+
+      {/* Documents view */}
+      {view === 'docs' && <DocumentsView />}
 
       {/* Task list */}
       {view === 'list' && (
