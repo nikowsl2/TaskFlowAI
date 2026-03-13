@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import type { Task } from '@/lib/api'
 import { useCreateTask, useDeleteTask, useTasks, useUpdateTask } from '@/hooks/useTasks'
@@ -303,15 +303,24 @@ function SubtaskRow({ task }: { task: Task }) {
 
 // ── Manual mode: full task card ───────────────────────────────────────────────
 
-function TaskCard({ task }: { task: Task }) {
+function TaskCard({ task, highlighted }: { task: Task; highlighted?: boolean }) {
   const updateTask = useUpdateTask()
   const deleteTask = useDeleteTask()
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (highlighted && ref.current) {
+      ref.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [highlighted])
 
   return (
     <div
+      ref={ref}
       className={cn(
         'group relative rounded-lg border border-border bg-surface p-4 transition-all hover:border-border/60 hover:bg-surface-2',
-        task.completed && 'opacity-60'
+        task.completed && 'opacity-60',
+        highlighted && 'ring-2 ring-primary/50 border-primary/40'
       )}
     >
       {/* Priority stripe */}
@@ -373,12 +382,28 @@ function TaskCard({ task }: { task: Task }) {
 
 // ── TaskPanel ─────────────────────────────────────────────────────────────────
 
-export default function TaskPanel({ mode }: { mode: Mode }) {
+export default function TaskPanel({
+  mode,
+  view,
+  onViewChange,
+}: {
+  mode: Mode
+  view: View
+  onViewChange?: (v: View) => void
+}) {
   const { data: tasks = [], isLoading } = useTasks()
   const [adding, setAdding] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
   const [expandedId, setExpandedId] = useState<number | null>(null)
-  const [view, setView] = useState<View>('list')
+  const [highlightedTaskId, setHighlightedTaskId] = useState<number | null>(null)
+
+  const handleCalendarTaskClick = (taskId: number) => {
+    setHighlightedTaskId(taskId)
+    setFilter('all')
+    onViewChange?.('list')
+    // Clear highlight after animation
+    setTimeout(() => setHighlightedTaskId(null), 2000)
+  }
 
   const filtered = tasks.filter((t) => {
     if (filter === 'active') return !t.completed
@@ -392,79 +417,143 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
   const progress = total > 0 ? Math.round((done / total) * 100) : 0
 
   // ── MENU MODE (AI sidebar) ────────────────────────────────────────────────
+  const [sidebarTab, setSidebarTab] = useState<'tasks' | 'notes' | 'email' | 'docs' | 'projects' | 'profile'>('tasks')
+
   if (mode === 'menu') {
     return (
       <div className="flex h-full flex-col">
-        {/* Header */}
-        <div className="border-b border-border px-3 py-2.5">
-          <div className="flex items-center justify-between">
-            <span className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
-              Tasks
-            </span>
-            <button
-              onClick={() => setAdding((v) => !v)}
-              className="font-mono text-[10px] text-primary transition-colors hover:text-primary/80"
-            >
-              {adding ? '✕ cancel' : '+ new'}
-            </button>
-          </div>
-
-          {total > 0 && (
-            <div className="mt-2">
-              <div className="mb-1 flex justify-between font-mono text-[9px] text-muted-foreground/50">
-                <span>{done}/{total} done</span>
-                <span>{progress}%</span>
-              </div>
-              <div className="h-0.5 overflow-hidden rounded-full bg-border">
-                <div
-                  className="h-full rounded-full bg-primary transition-all duration-700"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Filter tabs */}
-          <div className="mt-2 flex gap-0.5">
-            {(['all', 'active', 'done', 'high'] as Filter[]).map((f) => (
+        {/* Sidebar tab selector */}
+        <div className="border-b border-border px-2 py-2">
+          <div className="flex flex-wrap gap-0.5">
+            {([
+              { key: 'tasks', label: 'Tasks' },
+              { key: 'notes', label: 'Notes' },
+              { key: 'email', label: 'Email' },
+              { key: 'docs', label: 'Docs' },
+              { key: 'projects', label: 'Projects' },
+              { key: 'profile', label: 'Profile' },
+            ] as const).map((tab) => (
               <button
-                key={f}
-                onClick={() => setFilter(f)}
+                key={tab.key}
+                onClick={() => setSidebarTab(tab.key)}
                 className={cn(
-                  'rounded px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider transition-all',
-                  filter === f ? 'bg-primary/15 text-primary' : 'text-muted-foreground/40 hover:text-muted-foreground'
+                  'rounded-md px-2 py-1 text-[10px] font-semibold uppercase tracking-wide transition-all',
+                  sidebarTab === tab.key
+                    ? 'bg-primary/15 text-primary'
+                    : 'text-muted-foreground/50 hover:text-muted-foreground'
                 )}
               >
-                {f}
+                {tab.label}
               </button>
             ))}
           </div>
         </div>
 
-        {/* Add form */}
-        {adding && <AddTaskForm onClose={() => setAdding(false)} compact />}
+        {/* Sidebar content */}
+        {sidebarTab === 'tasks' && (
+          <>
+            {/* Tasks header */}
+            <div className="border-b border-border px-3 py-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Tasks
+                </span>
+                <button
+                  onClick={() => setAdding((v) => !v)}
+                  className="text-[10px] font-semibold text-primary transition-colors hover:text-primary/80"
+                >
+                  {adding ? '✕ cancel' : '+ new'}
+                </button>
+              </div>
 
-        {/* Menu list */}
-        <div className="flex-1 overflow-y-auto">
-          {isLoading ? (
-            <div className="flex justify-center py-6">
-              <div className="h-3.5 w-3.5 animate-spin rounded-full border border-primary border-t-transparent" />
+              {total > 0 && (
+                <div className="mt-2">
+                  <div className="mb-1 flex justify-between text-[10px] font-medium text-muted-foreground/50">
+                    <span>{done}/{total} done</span>
+                    <span>{progress}%</span>
+                  </div>
+                  <div className="h-0.5 overflow-hidden rounded-full bg-border">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all duration-700"
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Filter tabs */}
+              <div className="mt-2 flex gap-0.5">
+                {(['all', 'active', 'done', 'high'] as Filter[]).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setFilter(f)}
+                    className={cn(
+                      'rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide transition-all',
+                      filter === f ? 'bg-primary/15 text-primary' : 'text-muted-foreground/40 hover:text-muted-foreground'
+                    )}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
             </div>
-          ) : filtered.length === 0 ? (
-            <p className="py-8 text-center font-mono text-[10px] text-muted-foreground/30">
-              {filter === 'all' ? 'no tasks yet' : `no ${filter} tasks`}
-            </p>
-          ) : (
-            filtered.map((task) => (
-              <MenuTaskItem
-                key={task.id}
-                task={task}
-                expandedId={expandedId}
-                onExpand={setExpandedId}
-              />
-            ))
-          )}
-        </div>
+
+            {/* Add form */}
+            {adding && <AddTaskForm onClose={() => setAdding(false)} compact />}
+
+            {/* Menu list */}
+            <div className="flex-1 overflow-y-auto">
+              {isLoading ? (
+                <div className="flex justify-center py-6">
+                  <div className="h-3.5 w-3.5 animate-spin rounded-full border border-primary border-t-transparent" />
+                </div>
+              ) : filtered.length === 0 ? (
+                <p className="py-8 text-center text-[11px] text-muted-foreground/30">
+                  {filter === 'all' ? 'no tasks yet' : `no ${filter} tasks`}
+                </p>
+              ) : (
+                filtered.map((task) => (
+                  <MenuTaskItem
+                    key={task.id}
+                    task={task}
+                    expandedId={expandedId}
+                    onExpand={setExpandedId}
+                  />
+                ))
+              )}
+            </div>
+          </>
+        )}
+
+        {sidebarTab === 'notes' && (
+          <div className="flex-1 overflow-y-auto">
+            <MeetingNotesView />
+          </div>
+        )}
+
+        {sidebarTab === 'email' && (
+          <div className="flex-1 overflow-y-auto">
+            <EmailView />
+          </div>
+        )}
+
+        {sidebarTab === 'docs' && (
+          <div className="flex-1 overflow-y-auto">
+            <DocumentsView />
+          </div>
+        )}
+
+        {sidebarTab === 'projects' && (
+          <div className="flex-1 overflow-y-auto">
+            <ProjectsView />
+          </div>
+        )}
+
+        {sidebarTab === 'profile' && (
+          <div className="flex-1 overflow-y-auto">
+            <ProfileView />
+          </div>
+        )}
       </div>
     )
   }
@@ -477,6 +566,26 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
     { key: 'high', label: 'Priority' },
   ]
 
+  const VIEW_TITLES: Record<View, string> = {
+    list: 'Task Board',
+    calendar: 'Task Board',
+    notes: 'Meeting Notes',
+    email: 'Email Drafts',
+    docs: 'Documents',
+    projects: 'Projects',
+    profile: 'User Profile',
+  }
+
+  const VIEW_SUBTITLES: Record<View, string> = {
+    list: `${done} of ${total} completed`,
+    calendar: `${done} of ${total} completed`,
+    notes: 'Extract tasks from your notes',
+    email: 'AI-generated drafts ready to copy',
+    docs: 'Upload and query your documents with AI',
+    projects: 'Track project milestones and episodic memory',
+    profile: 'Persistent context for the AI assistant',
+  }
+
   return (
     <div className="flex h-full w-full flex-col">
       {/* Header */}
@@ -484,100 +593,13 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
         <div className="flex items-end justify-between">
           <div>
             <h1 className="text-xl font-extrabold tracking-tight">
-              {view === 'notes'
-              ? 'Meeting Notes'
-              : view === 'email'
-                ? 'Email Drafts'
-                : view === 'docs'
-                  ? 'Documents'
-                  : view === 'projects'
-                    ? 'Projects'
-                    : view === 'profile'
-                      ? 'User Profile'
-                      : 'Task Board'}
+              {VIEW_TITLES[view]}
             </h1>
             <p className="mt-0.5 font-mono text-xs text-muted-foreground">
-              {view === 'notes'
-                ? 'Extract tasks from your notes'
-                : view === 'email'
-                ? 'AI-generated drafts ready to copy'
-                : view === 'docs'
-                  ? 'Upload and query your documents with AI'
-                  : view === 'projects'
-                    ? 'Track project milestones and episodic memory'
-                    : view === 'profile'
-                      ? 'Persistent context for the AI assistant'
-                      : `${done} of ${total} completed`}
+              {VIEW_SUBTITLES[view]}
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {/* View toggle */}
-            <div className="flex rounded-lg border border-border p-0.5">
-              <button
-                onClick={() => setView('list')}
-                className={cn(
-                  'rounded-md px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
-                  view === 'list' ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
-                )}
-              >
-                List
-              </button>
-              <button
-                onClick={() => setView('calendar')}
-                className={cn(
-                  'rounded-md px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
-                  view === 'calendar' ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
-                )}
-              >
-                Calendar
-              </button>
-              <button
-                onClick={() => setView('notes')}
-                className={cn(
-                  'rounded-md px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
-                  view === 'notes' ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
-                )}
-              >
-                Notes
-              </button>
-              <button
-                onClick={() => setView('email')}
-                className={cn(
-                  'rounded-md px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
-                  view === 'email' ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
-                )}
-              >
-                Email
-              </button>
-              <button
-                onClick={() => setView('docs')}
-                className={cn(
-                  'rounded-md px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
-                  view === 'docs' ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
-                )}
-              >
-                Docs
-              </button>
-              <button
-                onClick={() => setView('projects')}
-                className={cn(
-                  'rounded-md px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
-                  view === 'projects' ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
-                )}
-              >
-                Projects
-              </button>
-              <button
-                onClick={() => setView('profile')}
-                className={cn(
-                  'rounded-md px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
-                  view === 'profile' ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
-                )}
-              >
-                Profile
-              </button>
-            </div>
-
             {view === 'list' && (
               <button
                 onClick={() => setAdding((v) => !v)}
@@ -635,7 +657,7 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
       </div>
 
       {/* Calendar view */}
-      {view === 'calendar' && <CalendarView />}
+      {view === 'calendar' && <CalendarView onTaskClick={handleCalendarTaskClick} />}
 
       {/* Meeting notes view */}
       {view === 'notes' && <MeetingNotesView />}
@@ -683,7 +705,7 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
           ) : (
             <div className="space-y-2">
               {filtered.map((task) => (
-                <TaskCard key={task.id} task={task} />
+                <TaskCard key={task.id} task={task} highlighted={highlightedTaskId === task.id} />
               ))}
             </div>
           )}

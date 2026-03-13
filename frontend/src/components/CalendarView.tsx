@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useTasks, useUpdateTask } from '@/hooks/useTasks'
 import type { Task } from '@/lib/api'
@@ -119,7 +119,7 @@ function MonthView({
               key={i}
               onClick={() => onDayClick(day)}
               className={cn(
-                'min-h-[76px] cursor-pointer rounded-lg border p-1.5 transition-colors hover:bg-surface-2',
+                'group relative min-h-[76px] cursor-pointer rounded-lg border p-1.5 transition-colors hover:bg-surface-2',
                 isCurrentMonth ? 'border-border/50 bg-surface' : 'border-transparent bg-transparent',
                 isToday && 'border-primary/40 bg-primary/5 hover:bg-primary/8'
               )}
@@ -144,6 +144,28 @@ function MonthView({
                   <div className="font-mono text-[9px] text-muted-foreground/40">+{extra} more</div>
                 )}
               </div>
+
+              {/* Hover preview tooltip */}
+              {dayTasks.length > 0 && (
+                <div className="pointer-events-none absolute left-1/2 bottom-full z-50 mb-1.5 hidden w-52 -translate-x-1/2 rounded-lg border border-border bg-surface p-2.5 shadow-lg group-hover:block">
+                  <div className="mb-1.5 text-[10px] font-semibold text-muted-foreground">
+                    {day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} &middot; {dayTasks.length} {dayTasks.length === 1 ? 'task' : 'tasks'}
+                  </div>
+                  <div className="space-y-1">
+                    {dayTasks.slice(0, 5).map((t) => (
+                      <div key={t.id} className="flex items-start gap-1.5">
+                        <span className={cn('mt-1 h-1.5 w-1.5 shrink-0 rounded-full', t.completed ? 'bg-muted-foreground/30' : `dot-${t.priority}`)} />
+                        <span className={cn('text-[11px] leading-tight', t.completed && 'text-muted-foreground/50 line-through')}>
+                          {t.title}
+                        </span>
+                      </div>
+                    ))}
+                    {dayTasks.length > 5 && (
+                      <div className="text-[10px] text-muted-foreground/40">+{dayTasks.length - 5} more</div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )
         })}
@@ -158,10 +180,14 @@ function WeekView({
   tasks,
   current,
   today,
+  onDayClick,
+  onTaskClick,
 }: {
   tasks: Task[]
   current: Date
   today: Date
+  onDayClick: (d: Date) => void
+  onTaskClick: (taskId: number) => void
 }) {
   const days = useMemo(() => {
     const start = startOfWeek(current)
@@ -176,7 +202,13 @@ function WeekView({
 
         return (
           <div key={i} className={cn('flex min-w-0 flex-1 flex-col', isToday && 'bg-primary/5')}>
-            <div className={cn('border-b border-border px-2 py-2.5 text-center', isToday && 'border-primary/30')}>
+            <div
+              onClick={() => onDayClick(day)}
+              className={cn(
+                'cursor-pointer border-b border-border px-2 py-2.5 text-center transition-colors hover:bg-surface-2',
+                isToday && 'border-primary/30'
+              )}
+            >
               <div className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/50">
                 {WEEKDAY_SHORT[day.getDay()]}
               </div>
@@ -191,7 +223,9 @@ function WeekView({
             </div>
             <div className="flex-1 space-y-1 overflow-y-auto p-1.5">
               {dayTasks.map((t) => (
-                <TaskChip key={t.id} task={t} />
+                <div key={t.id} onClick={() => onTaskClick(t.id)} className="cursor-pointer rounded transition-all hover:ring-1 hover:ring-primary/40 hover:bg-primary/5">
+                  <TaskChip task={t} />
+                </div>
               ))}
             </div>
           </div>
@@ -207,10 +241,12 @@ function DayView({
   tasks,
   current,
   today,
+  onTaskClick,
 }: {
   tasks: Task[]
   current: Date
   today: Date
+  onTaskClick: (taskId: number) => void
 }) {
   const updateTask = useUpdateTask()
   const isToday = isSameDay(current, today)
@@ -233,17 +269,18 @@ function DayView({
             return (
               <div
                 key={t.id}
+                onClick={() => onTaskClick(t.id)}
                 className={cn(
-                  'flex items-start gap-3 rounded-lg border bg-surface p-3.5 transition-all',
+                  'flex cursor-pointer items-start gap-3 rounded-lg border bg-surface p-3.5 transition-all hover:border-primary/40 hover:bg-surface-2',
                   t.completed
-                    ? 'border-border/40 opacity-60'
+                    ? 'border-border/40 opacity-60 hover:opacity-80'
                     : isOverdue
-                      ? 'border-red-500/20 bg-red-500/5'
+                      ? 'border-red-500/20 bg-red-500/5 hover:bg-red-500/10'
                       : 'border-border'
                 )}
               >
                 <button
-                  onClick={() => updateTask.mutate({ id: t.id, data: { completed: !t.completed } })}
+                  onClick={(e) => { e.stopPropagation(); updateTask.mutate({ id: t.id, data: { completed: !t.completed } }) }}
                   className={cn(
                     'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-all',
                     t.completed
@@ -298,10 +335,17 @@ function DayView({
 
 // ── MAIN EXPORT ───────────────────────────────────────────────────────────────
 
-export default function CalendarView() {
+export default function CalendarView({
+  onTaskClick,
+}: {
+  onTaskClick?: (taskId: number) => void
+}) {
   const { data: tasks = [] } = useTasks()
   const allTasks = useMemo(() => flattenTasks(tasks), [tasks])
   const tasksWithDeadline = useMemo(() => allTasks.filter((t) => t.due_date), [allTasks])
+  const handleTaskClick = useCallback((taskId: number) => {
+    onTaskClick?.(taskId)
+  }, [onTaskClick])
 
   const [scale, setScale] = useState<Scale>('month')
   const [current, setCurrent] = useState(() => {
@@ -347,44 +391,48 @@ export default function CalendarView() {
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-6 py-3">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => navigate(-1)}
-            className="flex h-7 w-7 items-center justify-center rounded-lg border border-border text-muted-foreground transition-all hover:border-primary/40 hover:text-foreground"
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M7.5 9L4.5 6l3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+      <div className="relative flex items-center border-b border-border px-6 py-3">
+        {/* Navigation — centered */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="pointer-events-auto flex items-center gap-2">
+            <button
+              onClick={() => navigate(-1)}
+              className="flex h-7 w-7 items-center justify-center rounded-lg border border-border text-muted-foreground transition-all hover:border-primary/40 hover:text-foreground"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M7.5 9L4.5 6l3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
 
-          <span className="min-w-[220px] text-center text-sm font-semibold">{headerLabel}</span>
+            <span className="min-w-[220px] text-center text-sm font-semibold">{headerLabel}</span>
 
-          <button
-            onClick={() => navigate(1)}
-            className="flex h-7 w-7 items-center justify-center rounded-lg border border-border text-muted-foreground transition-all hover:border-primary/40 hover:text-foreground"
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M4.5 3l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+            <button
+              onClick={() => navigate(1)}
+              className="flex h-7 w-7 items-center justify-center rounded-lg border border-border text-muted-foreground transition-all hover:border-primary/40 hover:text-foreground"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M4.5 3l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
 
-          <button
-            onClick={() => setCurrent(new Date(today))}
-            className="ml-1 rounded-lg border border-border px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground transition-all hover:border-primary/40 hover:text-foreground"
-          >
-            Today
-          </button>
+            <button
+              onClick={() => setCurrent(new Date(today))}
+              className="ml-1 rounded-lg border border-border px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground transition-all hover:border-primary/40 hover:text-foreground"
+            >
+              Today
+            </button>
+          </div>
         </div>
 
-        <div className="flex rounded-lg border border-border p-0.5">
+        {/* Scale toggle — right */}
+        <div className="ml-auto flex rounded-lg border border-border p-0.5">
           {(['day', 'week', 'month'] as Scale[]).map((s) => (
             <button
               key={s}
               onClick={() => setScale(s)}
               className={cn(
-                'rounded-md px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
-                scale === s ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
+                'rounded-md px-3 py-1 text-[11px] font-semibold uppercase tracking-wide transition-all',
+                scale === s ? 'bg-primary/20 text-primary' : 'text-muted-foreground/70 hover:text-foreground'
               )}
             >
               {s}
@@ -399,10 +447,10 @@ export default function CalendarView() {
           <MonthView tasks={tasksWithDeadline} current={current} today={today} onDayClick={(d) => { setCurrent(d); setScale('day') }} />
         )}
         {scale === 'week' && (
-          <WeekView tasks={tasksWithDeadline} current={current} today={today} />
+          <WeekView tasks={tasksWithDeadline} current={current} today={today} onDayClick={(d) => { setCurrent(d); setScale('day') }} onTaskClick={handleTaskClick} />
         )}
         {scale === 'day' && (
-          <DayView tasks={tasksWithDeadline} current={current} today={today} />
+          <DayView tasks={tasksWithDeadline} current={current} today={today} onTaskClick={handleTaskClick} />
         )}
       </div>
 

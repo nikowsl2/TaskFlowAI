@@ -278,7 +278,7 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
               isLoading ? 'animate-pulse bg-primary' : 'bg-primary/40'
             )}
           />
-          <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             {floating
               ? 'TaskFlow'
               : isLoading
@@ -290,14 +290,14 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
           {onSwitchMode && (
             <button
               onClick={onSwitchMode}
-              className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/50 transition-colors hover:text-muted-foreground"
+              className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/50 transition-colors hover:text-muted-foreground"
             >
               ← Tasks
             </button>
           )}
           <button
             onClick={() => chatApi.clearHistory().then(() => setMessages([]))}
-            className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/40 transition-colors hover:text-muted-foreground"
+            className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/40 transition-colors hover:text-muted-foreground"
           >
             Clear
           </button>
@@ -383,7 +383,7 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
           </button>
         </div>
         {!floating && (
-          <p className="mt-1 text-center font-mono text-[9px] text-muted-foreground/20">
+          <p className="mt-1 text-center text-[10px] font-medium text-muted-foreground/25">
             Enter to send · Shift+Enter for newline
           </p>
         )}

@@ -46,7 +46,7 @@ body,
 body {
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
-  font-family: 'Syne', system-ui, sans-serif;
+  font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   transition: background-color 0.25s ease, color 0.25s ease;
