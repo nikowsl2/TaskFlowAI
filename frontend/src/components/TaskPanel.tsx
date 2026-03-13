@@ -6,10 +6,12 @@ import CalendarView from './CalendarView'
 import DocumentsView from './DocumentsView'
 import EmailView from './EmailView'
 import MeetingNotesView from './MeetingNotesView'
+import { ProfileView } from './ProfileView'
+import { ProjectsView } from './ProjectsView'
 
 type Mode = 'manual' | 'menu'
 type Filter = 'all' | 'active' | 'done' | 'high'
-type View = 'list' | 'calendar' | 'notes' | 'email' | 'docs'
+type View = 'list' | 'calendar' | 'notes' | 'email' | 'docs' | 'projects' | 'profile'
 
 const PRIORITY_DOT: Record<string, string> = {
   high: 'dot-high',
@@ -488,7 +490,11 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
                 ? 'Email Drafts'
                 : view === 'docs'
                   ? 'Documents'
-                  : 'Task Board'}
+                  : view === 'projects'
+                    ? 'Projects'
+                    : view === 'profile'
+                      ? 'User Profile'
+                      : 'Task Board'}
             </h1>
             <p className="mt-0.5 font-mono text-xs text-muted-foreground">
               {view === 'notes'
@@ -497,7 +503,11 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
                 ? 'AI-generated drafts ready to copy'
                 : view === 'docs'
                   ? 'Upload and query your documents with AI'
-                  : `${done} of ${total} completed`}
+                  : view === 'projects'
+                    ? 'Track project milestones and episodic memory'
+                    : view === 'profile'
+                      ? 'Persistent context for the AI assistant'
+                      : `${done} of ${total} completed`}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -547,6 +557,24 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
                 )}
               >
                 Docs
+              </button>
+              <button
+                onClick={() => setView('projects')}
+                className={cn(
+                  'rounded-md px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
+                  view === 'projects' ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
+                )}
+              >
+                Projects
+              </button>
+              <button
+                onClick={() => setView('profile')}
+                className={cn(
+                  'rounded-md px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-all',
+                  view === 'profile' ? 'bg-primary/20 text-primary' : 'text-muted-foreground/50 hover:text-muted-foreground'
+                )}
+              >
+                Profile
               </button>
             </div>
 
@@ -617,6 +645,20 @@ export default function TaskPanel({ mode }: { mode: Mode }) {
 
       {/* Documents view */}
       {view === 'docs' && <DocumentsView />}
+
+      {/* Projects view */}
+      {view === 'projects' && (
+        <div className="flex-1 overflow-y-auto">
+          <ProjectsView />
+        </div>
+      )}
+
+      {/* Profile view */}
+      {view === 'profile' && (
+        <div className="flex-1 overflow-y-auto">
+          <ProfileView />
+        </div>
+      )}
 
       {/* Task list */}
       {view === 'list' && (
