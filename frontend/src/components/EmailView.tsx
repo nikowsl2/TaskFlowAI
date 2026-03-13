@@ -31,6 +31,81 @@ function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) 
   )
 }
 
+// ── Compact draft row (sidebar) ───────────────────────────────────────────
+
+function CompactDraftRow({ draft }: { draft: EmailDraft }) {
+  const qc = useQueryClient()
+  const [expanded, setExpanded] = useState(false)
+
+  const deleteDraft = useMutation({
+    mutationFn: () => emailDraftsApi.delete(draft.id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['drafts'] }),
+  })
+
+  const copyAll = () => {
+    navigator.clipboard.writeText(
+      `To: ${draft.to_field}\nSubject: ${draft.subject}\n\n${draft.body}`
+    )
+  }
+
+  return (
+    <div className="border-b border-border/60 last:border-0">
+      <div
+        className={cn(
+          'flex cursor-pointer items-start gap-2 px-3 py-2.5 transition-colors hover:bg-surface-2',
+          expanded && 'bg-surface-2'
+        )}
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold leading-snug">{draft.subject}</p>
+          <p className="mt-0.5 truncate text-[10px] text-muted-foreground/50">
+            To: {draft.to_field}
+          </p>
+          <p className="mt-0.5 text-[10px] text-muted-foreground/35">
+            {formatDate(draft.updated_at)}
+          </p>
+        </div>
+        <svg
+          width="10" height="10" viewBox="0 0 10 10" fill="none"
+          className={cn(
+            'mt-1 shrink-0 text-muted-foreground/30 transition-transform',
+            expanded && 'rotate-180'
+          )}
+        >
+          <path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </div>
+
+      {expanded && (
+        <div className="border-t border-border/40 bg-surface-2 px-3 pb-3 pt-2.5">
+          <div className="rounded border border-border/40 bg-surface px-2.5 py-2">
+            <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-foreground/75">
+              {draft.body}
+            </pre>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              onClick={(e) => { e.stopPropagation(); copyAll() }}
+              className="rounded bg-primary/10 px-2 py-0.5 text-[9px] font-bold uppercase text-primary hover:bg-primary/20"
+            >
+              Copy
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); deleteDraft.mutate() }}
+              className="text-[9px] font-semibold uppercase text-muted-foreground/40 hover:text-red-400"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Full draft row (manual mode) ─────────────────────────────────────────
+
 function DraftRow({ draft }: { draft: EmailDraft }) {
   const qc = useQueryClient()
   const [expanded, setExpanded] = useState(false)
@@ -192,12 +267,48 @@ function DraftRow({ draft }: { draft: EmailDraft }) {
   )
 }
 
-export default function EmailView() {
+export default function EmailView({ compact }: { compact?: boolean }) {
   const { data: drafts = [], isLoading } = useQuery({
     queryKey: ['drafts'],
     queryFn: emailDraftsApi.list,
     refetchInterval: 10_000,
   })
+
+  if (compact) {
+    return (
+      <div className="flex flex-1 flex-col">
+        <div className="border-b border-border px-3 py-2.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Drafts
+          </span>
+          {drafts.length > 0 && (
+            <span className="ml-1.5 text-[10px] text-muted-foreground/40">
+              {drafts.length}
+            </span>
+          )}
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {isLoading ? (
+            <div className="flex justify-center py-6">
+              <div className="h-3.5 w-3.5 animate-spin rounded-full border border-primary border-t-transparent" />
+            </div>
+          ) : drafts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-10">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-muted-foreground/20">
+                <rect x="2" y="4" width="16" height="12" rx="2" stroke="currentColor" strokeWidth="1.5" />
+                <path d="M2 7l8 5.5L18 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+              <p className="text-[10px] text-muted-foreground/30">No drafts yet</p>
+            </div>
+          ) : (
+            drafts.map((draft) => (
+              <CompactDraftRow key={draft.id} draft={draft} />
+            ))
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex-1 overflow-y-auto px-6 py-4">

@@ -527,13 +527,13 @@ export default function TaskPanel({
 
         {sidebarTab === 'notes' && (
           <div className="flex-1 overflow-y-auto">
-            <MeetingNotesView />
+            <MeetingNotesView compact />
           </div>
         )}
 
         {sidebarTab === 'email' && (
           <div className="flex-1 overflow-y-auto">
-            <EmailView />
+            <EmailView compact />
           </div>
         )}
 
@@ -545,13 +545,13 @@ export default function TaskPanel({
 
         {sidebarTab === 'projects' && (
           <div className="flex-1 overflow-y-auto">
-            <ProjectsView />
+            <ProjectsView compact />
           </div>
         )}
 
         {sidebarTab === 'profile' && (
           <div className="flex-1 overflow-y-auto">
-            <ProfileView />
+            <ProfileView compact />
           </div>
         )}
       </div>
