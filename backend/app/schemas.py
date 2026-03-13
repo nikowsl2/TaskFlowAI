@@ -22,6 +22,8 @@ class UserProfileOut(BaseModel):
     preferences: str | None = None
     current_focus: str | None = None
     extra_notes: str | None = None
+    active_goals: str | None = None
+    conversation_summary: str | None = None
     updated_at: datetime | None = None
     model_config = {"from_attributes": True}
 

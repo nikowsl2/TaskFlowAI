@@ -24,6 +24,16 @@ async def lifespan(app: FastAPI):
             conn.commit()
         except Exception:
             pass
+        try:
+            conn.execute(text("ALTER TABLE user_profiles ADD COLUMN active_goals TEXT"))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE user_profiles ADD COLUMN conversation_summary TEXT"))
+            conn.commit()
+        except Exception:
+            pass
     # Create DB tables on startup
     Base.metadata.create_all(bind=engine)
     yield

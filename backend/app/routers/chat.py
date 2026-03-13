@@ -13,6 +13,10 @@ from app.database import SessionLocal, get_db
 from app.models import Message, UserProfile
 from app.schemas import ChatMessage, MessageOut
 
+# Approximate token budget for messages older than the last 20.
+# ~4 chars per token; trigger compression when older messages exceed ~8k tokens (~32k chars).
+COMPRESSION_CHAR_THRESHOLD = 50_000
+
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 MORNING_BRIEF_TRIGGER = """\
@@ -45,10 +49,12 @@ async def stream_chat(payload: ChatMessage, db: Session = Depends(get_db)):
 
     # Load history for context (last 20 messages)
     history = (
-        db.query(Message).order_by(Message.created_at.desc()).limit(20).all()[::-1]
+        db.query(Message).order_by(
+            Message.created_at.desc()).limit(20).all()[::-1]
     )
     messages = [
-        {"role": "assistant" if m.role == "morning_brief" else m.role, "content": m.content}
+        {"role": "assistant" if m.role ==
+            "morning_brief" else m.role, "content": m.content}
         for m in history
     ]
 
@@ -60,7 +66,8 @@ async def stream_chat(payload: ChatMessage, db: Session = Depends(get_db)):
     async def event_stream():
         full_response = ""
         async for chunk in run_agent(messages, db):
-            full_response += chunk.get("content", "") if chunk.get("type") == "text" else ""
+            full_response += chunk.get("content",
+                                       "") if chunk.get("type") == "text" else ""
             yield f"data: {json.dumps(chunk)}\n\n"
 
         # Persist assistant response
@@ -70,10 +77,101 @@ async def stream_chat(payload: ChatMessage, db: Session = Depends(get_db)):
             db.commit()
 
             total_count = db.query(Message).count()
-            if total_count > 0 and total_count % 10 == 0:
-                asyncio.create_task(_condense_old_messages(total_count))
+            # Rolling summary: compress older messages when their char total exceeds threshold
+            if total_count > 20:
+                asyncio.create_task(_maybe_summarize_old_messages())
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+SUMMARIZE_PROMPT = """\
+You are summarizing a task management conversation to preserve context across a long session.
+Given a previous rolling summary (if any) and new messages, produce an updated summary \
+that captures:
+- Tasks created, updated, completed, or deleted (with IDs and titles)
+- Decisions made or commitments stated
+- Active topics and their current status
+- User preferences or context revealed
+- Unresolved questions or pending actions
+
+Be concise (under 400 words). Preserve specific task titles and project names.
+Do not include pleasantries or meta-commentary.\
+"""
+
+
+async def _call_summarizer(user_content: str) -> str:
+    try:
+        if settings.AI_PROVIDER == "openai":
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+            resp = await client.chat.completions.create(
+                model=settings.AI_MODEL,
+                messages=[
+                    {"role": "system", "content": SUMMARIZE_PROMPT},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=0,
+                max_tokens=600,
+            )
+            return resp.choices[0].message.content or ""
+        else:
+            import anthropic as ant
+            client = ant.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+            resp = await client.messages.create(
+                model=settings.AI_MODEL,
+                max_tokens=600,
+                system=SUMMARIZE_PROMPT,
+                messages=[{"role": "user", "content": user_content}],
+            )
+            return resp.content[0].text if resp.content else ""
+    except Exception:
+        return ""
+
+
+async def _maybe_summarize_old_messages() -> None:
+    """Compress messages older than the last 20 when their total char count exceeds threshold."""
+    db_local = SessionLocal()
+    try:
+        total_count = db_local.query(Message).count()
+        if total_count <= 20:
+            return
+
+        # Messages older than the last 20
+        older_msgs = (
+            db_local.query(Message)
+            .order_by(Message.id.asc())
+            .limit(total_count - 20)
+            .all()
+        )
+        if not older_msgs:
+            return
+
+        total_chars = sum(len(m.content) for m in older_msgs)
+        if total_chars < COMPRESSION_CHAR_THRESHOLD:
+            return
+
+        profile = db_local.get(UserProfile, 1)
+        prior_summary = profile.conversation_summary if profile else None
+
+        # Cap at 40 messages for the summarizer input to avoid huge prompts
+        msgs_to_summarize = older_msgs[-40:]
+        conv_text = "\n".join(
+            f"{m.role}: {m.content[:500]}" for m in msgs_to_summarize)
+        prior = f"Prior summary:\n{prior_summary}\n\n" if prior_summary else ""
+        user_content = f"{prior}New messages to incorporate:\n{conv_text}"
+
+        summary = await _call_summarizer(user_content)
+        if summary:
+            if profile is None:
+                profile = UserProfile(id=1)
+                db_local.add(profile)
+            profile.conversation_summary = summary
+            db_local.commit()
+    except Exception as exc:
+        log_store.log(
+            "system", {"error": f"Summary error: {exc}"}, level="WARNING")
+    finally:
+        db_local.close()
 
 
 async def _extract_user_facts(text: str) -> str:
@@ -87,7 +185,8 @@ async def _extract_user_facts(text: str) -> str:
             client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
             resp = await client.chat.completions.create(
                 model=settings.AI_MODEL,
-                messages=[{"role": "system", "content": system}, {"role": "user", "content": text}],
+                messages=[{"role": "system", "content": system},
+                          {"role": "user", "content": text}],
                 temperature=0,
                 max_tokens=200,
             )
@@ -111,7 +210,8 @@ async def _condense_old_messages(total_count: int) -> None:
     db_local = SessionLocal()
     try:
         offset = max(0, total_count - 25)
-        msgs = db_local.query(Message).order_by(Message.id.asc()).offset(offset).limit(10).all()
+        msgs = db_local.query(Message).order_by(
+            Message.id.asc()).offset(offset).limit(10).all()
         text = "\n".join(f"{m.role}: {m.content}" for m in msgs)
         facts = await _extract_user_facts(text)
         if facts:
@@ -121,10 +221,12 @@ async def _condense_old_messages(total_count: int) -> None:
                 db_local.add(profile)
             from datetime import date
             entry = f"[{date.today().isoformat()}] {facts}"
-            profile.extra_notes = (profile.extra_notes + "\n" + entry) if profile.extra_notes else entry
+            profile.extra_notes = (
+                profile.extra_notes + "\n" + entry) if profile.extra_notes else entry
             db_local.commit()
     except Exception as exc:
-        log_store.log("system", {"error": f"Condensation error: {exc}"}, level="WARNING")
+        log_store.log(
+            "system", {"error": f"Condensation error: {exc}"}, level="WARNING")
     finally:
         db_local.close()
 
@@ -147,14 +249,16 @@ async def stream_brief(db: Session = Depends(get_db)):
                 if chunk.get("type") == "text":
                     full_response += chunk["content"]
                     payload = json.dumps(
-                        {"type": "morning_brief_text", "content": chunk["content"]}
+                        {"type": "morning_brief_text",
+                            "content": chunk["content"]}
                     )
                     yield f"data: {payload}\n\n"
                 elif chunk.get("type") == "status":
                     yield f"data: {json.dumps(chunk)}\n\n"
                 elif chunk.get("type") == "done":
                     if full_response:
-                        db.add(Message(role="morning_brief", content=full_response))
+                        db.add(Message(role="morning_brief",
+                               content=full_response))
                         p = db.get(UserProfile, 1)
                         if p is None:
                             p = UserProfile(id=1)

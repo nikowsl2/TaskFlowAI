@@ -6,6 +6,7 @@ from functools import lru_cache
 from app.config import settings
 
 EPISODIC_COLLECTION = "taskflow_episodes"
+USER_MEMORIES_COLLECTION = "taskflow_user_memories"
 
 
 @lru_cache(maxsize=1)
@@ -84,5 +85,58 @@ def delete_project_episodes(project_id: int) -> None:
     try:
         col = _get_episodic_collection()
         col.delete(where={"project_id": project_id})
+    except Exception:
+        pass
+
+
+# ── User personal memory ──────────────────────────────────────────────────────
+
+
+@lru_cache(maxsize=1)
+def _get_user_memory_collection():
+    import chromadb
+    from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
+
+    if not settings.OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY required for user memory")
+
+    ef = OpenAIEmbeddingFunction(
+        api_key=settings.OPENAI_API_KEY,
+        model_name="text-embedding-3-small",
+    )
+    client = chromadb.PersistentClient(path=settings.CHROMA_DB_PATH)
+    return client.get_or_create_collection(USER_MEMORIES_COLLECTION, embedding_function=ef)
+
+
+def log_user_memory(memory_text: str) -> str:
+    """Log a personal user memory (anecdote, preference detail, past experience)."""
+    col = _get_user_memory_collection()
+    memory_id = f"umem_{int(time.time() * 1000)}"
+    col.upsert(
+        ids=[memory_id],
+        documents=[memory_text],
+        metadatas=[{"logged_at": int(time.time() * 1000)}],
+    )
+    return memory_id
+
+
+def recall_user_memories(query: str, n_results: int = 5) -> list[dict]:
+    """Semantic search over personal user memories."""
+    try:
+        col = _get_user_memory_collection()
+        results = col.query(query_texts=[query], n_results=n_results)
+        docs = results.get("documents", [[]])[0]
+        metas = results.get("metadatas", [[]])[0]
+        return [{"text": d, "metadata": m} for d, m in zip(docs, metas)]
+    except Exception:
+        return []
+
+
+def delete_all_user_memories() -> None:
+    try:
+        col = _get_user_memory_collection()
+        all_ids = col.get()["ids"]
+        if all_ids:
+            col.delete(ids=all_ids)
     except Exception:
         pass

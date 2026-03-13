@@ -205,6 +205,8 @@ export interface UserProfile {
   preferences: string | null
   current_focus: string | null
   extra_notes: string | null
+  active_goals: string | null
+  conversation_summary: string | null
   updated_at: string | null
 }
 

@@ -20,7 +20,7 @@ from app.ai import episodic
 from app.models import Document, EmailDraft, Project, Task, UserProfile
 
 Priority = Literal["low", "medium", "high"]
-ProfileField = Literal["role_and_goals", "preferences", "current_focus", "extra_notes"]
+ProfileField = Literal["role_and_goals", "preferences", "current_focus", "extra_notes", "active_goals"]
 
 
 # ── Input models ──────────────────────────────────────────────────────────────
@@ -103,6 +103,15 @@ class LogProjectEventInput(BaseModel):
 
 class RecallProjectHistoryInput(BaseModel):
     project_id: int
+    query: str
+    n_results: int = 5
+
+
+class LogUserMemoryInput(BaseModel):
+    memory_text: str
+
+
+class RecallUserContextInput(BaseModel):
     query: str
     n_results: int = 5
 
@@ -353,7 +362,7 @@ TOOL_DEFINITIONS = [
                 "properties": {
                     "field": {
                         "type": "string",
-                        "enum": ["role_and_goals", "preferences", "current_focus", "extra_notes"],
+                        "enum": ["role_and_goals", "preferences", "current_focus", "extra_notes", "active_goals"],
                         "description": "Which profile field to update.",
                     },
                     "value": {
@@ -416,6 +425,47 @@ TOOL_DEFINITIONS = [
                     "n_results": {"type": "integer", "description": "Max episodes to return (default 5)."},
                 },
                 "required": ["project_id", "query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "log_user_memory",
+            "description": (
+                "Save a personal memory about the user — past experiences, anecdotes, "
+                "strong preferences, recurring patterns. Use for context too rich or "
+                "specific for the profile fields. Call proactively when the user shares "
+                "something personal or experiential."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "memory_text": {
+                        "type": "string",
+                        "description": "The memory to store. Include who/what/when/why context.",
+                    },
+                },
+                "required": ["memory_text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "recall_user_context",
+            "description": (
+                "Retrieve personal memories relevant to the current topic. Call when "
+                "the user references past experiences or when their personal context "
+                "would improve your response quality."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What personal context to search for."},
+                    "n_results": {"type": "integer", "description": "Max memories to return (default 5)."},
+                },
+                "required": ["query"],
             },
         },
     },
@@ -741,6 +791,24 @@ async def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
             ok=True,
             message=f"Found {len(episodes)} episode(s) for project '{project.name}'.",
             data={"episodes": [e["text"] for e in episodes]},
+        )
+
+    if name == "log_user_memory":
+        inp = LogUserMemoryInput.model_validate(args)
+        try:
+            memory_id = episodic.log_user_memory(inp.memory_text)
+            return ToolResult(ok=True, message=f"Stored personal memory: {memory_id}")
+        except Exception as e:
+            return ToolResult(ok=False, message=f"Could not store memory: {e}")
+
+    if name == "recall_user_context":
+        inp = RecallUserContextInput.model_validate(args)
+        n = min(inp.n_results, 10)
+        memories = episodic.recall_user_memories(inp.query, n)
+        return ToolResult(
+            ok=True,
+            message=f"Found {len(memories)} personal memory/memories.",
+            data={"memories": [m["text"] for m in memories]},
         )
 
     return ToolResult(ok=False, message=f"Unknown tool: '{name}'")

@@ -106,6 +106,8 @@ class UserProfile(Base):
     preferences: Mapped[str | None] = mapped_column(Text, nullable=True)
     current_focus: Mapped[str | None] = mapped_column(Text, nullable=True)
     extra_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active_goals: Mapped[str | None] = mapped_column(Text, nullable=True)
+    conversation_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_brief_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime,
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),

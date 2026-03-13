@@ -19,7 +19,7 @@ You help users manage their task list and calendar using the available tools.
 
 Today's date is {today}. Use this to resolve relative dates like "next Monday" or "Thursday".
 
-{profile}{projects}Capabilities:
+{goals}{profile}{summary}{projects}Capabilities:
 - create_task           — add a new task with optional description, priority, and deadline
 - list_tasks            — show all tasks with IDs (call this first when you need a task ID)
 - update_task           — edit any field: rename, rewrite description, change priority, \
@@ -31,10 +31,12 @@ set or clear a deadline, or reopen a completed task
 - get_email_draft       — retrieve a draft's current content
 - list_documents        — show all uploaded documents with IDs and AI summaries
 - search_documents      — retrieve semantically relevant text chunks from documents
-- update_user_profile   — save durable user context (role, prefs, focus, notes)
+- update_user_profile   — save durable user context (role, prefs, focus, notes, active_goals)
 - list_projects / create_project — manage project registry
 - log_project_event     — record milestones and decisions to episodic memory
 - recall_project_history — retrieve past project context via semantic search
+- log_user_memory        — save a personal memory about the user
+- recall_user_context    — retrieve relevant personal memories
 
 Rules:
 1. If the user refers to a task by name rather than ID, call list_tasks first to find the ID.
@@ -57,6 +59,22 @@ previous decisions, or earlier context. Always call list_projects first to get p
 10. MORNING BRIEF: When generating a morning brief, stay concise and structured. \
 Do not offer to perform actions in the brief itself — just synthesize and present. \
 Do not open tangents about emails or meeting notes.
+11. AMBIGUITY: Never guess at which task or project the user means when they use vague \
+references ("that task", "it", "the project", "him"). Call list_tasks or list_projects \
+first, then present numbered options: "Did you mean: (1) X  (2) Y?" and wait for \
+confirmation before taking any action — especially before delete, complete, or update.
+12. USER MEMORY: Call log_user_memory proactively when the user shares personal anecdotes, \
+past experiences, strong opinions, or recurring patterns too rich for profile fields. \
+Call recall_user_context before answering questions where the user's personal history \
+is relevant (e.g. "like last time", "based on how I work").
+13. ACTIVE GOALS: When the user states clear objectives, requirements, or goals for the \
+session, call update_user_profile(field="active_goals", value=...) to record them. \
+Review active_goals at the start of each response in long conversations (>20 messages) \
+to ensure you are tracking towards them.
+14. TOPIC RECOVERY: When the user returns to a topic after a digression, reference what \
+was previously established in the conversation summary or recent context without \
+asking the user to repeat themselves. Start with "Earlier we established that..." \
+if relevant.
 
 Meeting notes processing:
 When the user shares meeting notes or asks you to process notes:
@@ -99,6 +117,16 @@ set due_date in YYYY-MM-DD format for any deadline or meeting date (resolve rela
 
 def _build_system_prompt(db: Session) -> str:
     profile = db.get(UserProfile, 1)
+
+    # Active goals — injected first if present
+    goals_text = ""
+    if profile and profile.active_goals:
+        goals_text = (
+            "ACTIVE GOALS (track these throughout the conversation):\n"
+            + profile.active_goals
+            + "\n\n"
+        )
+
     profile_text = ""
     if profile:
         parts = []
@@ -112,6 +140,15 @@ def _build_system_prompt(db: Session) -> str:
             parts.append(f"Extra Notes: {profile.extra_notes}")
         if parts:
             profile_text = "User Profile (always take this into account):\n" + "\n".join(parts) + "\n\n"
+
+    # Conversation summary — injected as prior context block
+    summary_text = ""
+    if profile and profile.conversation_summary:
+        summary_text = (
+            "Previous Conversation Context (summary of earlier messages):\n"
+            + profile.conversation_summary
+            + "\n\n"
+        )
 
     staleness_text = ""
     try:
@@ -135,7 +172,9 @@ def _build_system_prompt(db: Session) -> str:
 
     return SYSTEM_PROMPT_TEMPLATE.format(
         today=date.today().isoformat(),
+        goals=goals_text,
         profile=profile_text,
+        summary=summary_text,
         projects=staleness_text,
     )
 
@@ -377,5 +416,7 @@ def _status_label(tool_name: str) -> str:
         "create_project": "Creating project\u2026",
         "log_project_event": "Logging project event\u2026",
         "recall_project_history": "Recalling project history\u2026",
+        "log_user_memory": "Saving personal memory\u2026",
+        "recall_user_context": "Recalling personal context\u2026",
     }
     return labels.get(tool_name, f"Running {tool_name}\u2026")
