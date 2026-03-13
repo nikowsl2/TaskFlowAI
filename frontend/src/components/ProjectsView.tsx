@@ -75,7 +75,11 @@ function ProjectCard({ project }: { project: Project }) {
           </select>
           {hovered && (
             <button
-              onClick={() => deleteProject.mutate(project.id)}
+              onClick={() => {
+                if (window.confirm(`Delete project "${project.name}" and all its memories? This cannot be undone.`)) {
+                  deleteProject.mutate(project.id)
+                }
+              }}
               className="text-red-400 hover:text-red-300 text-xs"
             >
               Delete

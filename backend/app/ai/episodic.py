@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import time
 from functools import lru_cache
+
 from app.config import settings
 
-CHROMA_PATH = "backend/chroma_db/"
 EPISODIC_COLLECTION = "taskflow_episodes"
 
 
@@ -20,7 +20,7 @@ def _get_episodic_collection():
         api_key=settings.OPENAI_API_KEY,
         model_name="text-embedding-3-small",
     )
-    client = chromadb.PersistentClient(path=CHROMA_PATH)
+    client = chromadb.PersistentClient(path=settings.CHROMA_DB_PATH)
     return client.get_or_create_collection(EPISODIC_COLLECTION, embedding_function=ef)
 
 

@@ -11,6 +11,8 @@ from app.ai.tools import ANTHROPIC_TOOL_DEFINITIONS, TOOL_DEFINITIONS, execute_t
 from app.config import settings
 from app.models import Project, UserProfile
 
+MAX_TOOL_ROUNDS = 20
+
 SYSTEM_PROMPT_TEMPLATE = """\
 You are TaskFlow AI, a task management and scheduling assistant. \
 You help users manage their task list and calendar using the available tools.
@@ -52,6 +54,9 @@ blockers, or scope changes. Always call list_projects first to get project IDs. 
 a project if none exists when the user discusses ongoing project work.
 9. PROJECT RECALL: Call recall_project_history before answering questions about past project work, \
 previous decisions, or earlier context. Always call list_projects first to get project IDs.
+10. MORNING BRIEF: When generating a morning brief, stay concise and structured. \
+Do not offer to perform actions in the brief itself — just synthesize and present. \
+Do not open tangents about emails or meeting notes.
 
 Meeting notes processing:
 When the user shares meeting notes or asks you to process notes:
@@ -163,6 +168,10 @@ async def _openai_loop(
 
     try:
         while True:
+            if tool_call_count >= MAX_TOOL_ROUNDS:
+                yield {"type": "text", "content": "\n\n[Reached tool call limit — stopping.]"}
+                yield {"type": "done"}
+                return
             stream = await client.chat.completions.create(
                 model=settings.AI_MODEL,
                 messages=msgs,
@@ -222,7 +231,7 @@ async def _openai_loop(
                     fn_args = {}
 
                 log_store.log(log_store.TOOL_CALL, {"name": fn_name, "args": fn_args})
-                result = execute_tool(fn_name, fn_args, db)
+                result = await execute_tool(fn_name, fn_args, db)
                 tool_call_count += 1
 
                 try:
@@ -261,6 +270,10 @@ async def _anthropic_loop(
 
     try:
         while True:
+            if tool_call_count >= MAX_TOOL_ROUNDS:
+                yield {"type": "text", "content": "\n\n[Reached tool call limit — stopping.]"}
+                yield {"type": "done"}
+                return
             collected_text = ""
             tool_uses: list[dict] = []
             current_tool: dict | None = None
@@ -321,7 +334,7 @@ async def _anthropic_loop(
             for tu in tool_uses:
                 yield {"type": "status", "content": _status_label(tu["name"])}
                 log_store.log(log_store.TOOL_CALL, {"name": tu["name"], "args": tu["input"]})
-                result = execute_tool(tu["name"], tu["input"], db)
+                result = await execute_tool(tu["name"], tu["input"], db)
                 tool_call_count += 1
 
                 try:

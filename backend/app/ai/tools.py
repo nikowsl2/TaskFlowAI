@@ -16,8 +16,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
-from app.models import CalendarEvent, Document, EmailDraft, Project, Task, UserProfile
 from app.ai import episodic
+from app.models import Document, EmailDraft, Project, Task, UserProfile
 
 Priority = Literal["low", "medium", "high"]
 ProfileField = Literal["role_and_goals", "preferences", "current_focus", "extra_notes"]
@@ -53,29 +53,6 @@ class DeleteTaskInput(BaseModel):
 
 class CompleteTaskInput(BaseModel):
     task_id: int
-
-
-class AddCalendarEventInput(BaseModel):
-    title: str
-    start_time: str  # ISO 8601 datetime, e.g. "2025-06-02T10:00:00"
-    end_time: str | None = None  # ISO 8601 datetime
-    description: str | None = None
-
-
-class ListCalendarEventsInput(BaseModel):
-    pass
-
-
-class UpdateCalendarEventInput(BaseModel):
-    event_id: int
-    title: str | None = None
-    start_time: str | None = None  # ISO 8601 datetime
-    end_time: str | None = None  # ISO 8601 datetime; send "" to clear
-    description: str | None = None
-
-
-class DeleteCalendarEventInput(BaseModel):
-    event_id: int
 
 
 class DraftEmailInput(BaseModel):
@@ -461,17 +438,17 @@ ANTHROPIC_TOOL_DEFINITIONS = _to_anthropic_format()
 # ── Dispatcher ────────────────────────────────────────────────────────────────
 
 
-def execute_tool(name: str, args: dict, db: Session) -> str:
+async def execute_tool(name: str, args: dict, db: Session) -> str:
     """Validate input, run the tool, return a ToolResult JSON string."""
     try:
-        return _dispatch(name, args, db).to_json()
+        return (await _dispatch(name, args, db)).to_json()
     except ValidationError as e:
         return ToolResult(ok=False, message=f"Invalid arguments: {e.errors()}").to_json()
     except Exception as e:
         return ToolResult(ok=False, message=f"Tool error: {e}").to_json()
 
 
-def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
+async def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
     if name == "create_task":
         inp = CreateTaskInput.model_validate(args)
         due = _parse_date(inp.due_date)
@@ -569,88 +546,6 @@ def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
             data={"id": task.id, "title": task.title},
         )
 
-    if name == "add_calendar_event":
-        inp = AddCalendarEventInput.model_validate(args)
-        start = _parse_datetime(inp.start_time)
-        if start is None:
-            return ToolResult(ok=False, message=f"Invalid start_time: '{inp.start_time}'")
-        end = _parse_datetime(inp.end_time) if inp.end_time else None
-        ev = CalendarEvent(
-            title=inp.title,
-            description=inp.description,
-            start_time=start,
-            end_time=end,
-        )
-        db.add(ev)
-        db.commit()
-        db.refresh(ev)
-        return ToolResult(
-            ok=True,
-            message=f"Added calendar event #{ev.id}: '{ev.title}' at {ev.start_time.isoformat()}",
-            data={"id": ev.id, "title": ev.title, "start_time": ev.start_time.isoformat()},
-        )
-
-    if name == "list_calendar_events":
-        ListCalendarEventsInput.model_validate(args)
-        events = db.query(CalendarEvent).order_by(CalendarEvent.start_time.asc()).all()
-        event_list = [
-            {
-                "id": e.id,
-                "title": e.title,
-                "start_time": e.start_time.isoformat(),
-                "end_time": e.end_time.isoformat() if e.end_time else None,
-                "description": e.description,
-            }
-            for e in events
-        ]
-        return ToolResult(
-            ok=True,
-            message=f"Found {len(events)} calendar event(s)",
-            data={"events": event_list},
-        )
-
-    if name == "update_calendar_event":
-        inp = UpdateCalendarEventInput.model_validate(args)
-        ev = db.get(CalendarEvent, inp.event_id)
-        if not ev:
-            return ToolResult(ok=False, message=f"Event #{inp.event_id} not found.")
-        updated_fields: list[str] = []
-        if inp.title is not None:
-            ev.title = inp.title
-            updated_fields.append("title")
-        if inp.description is not None:
-            ev.description = inp.description
-            updated_fields.append("description")
-        if inp.start_time is not None:
-            parsed = _parse_datetime(inp.start_time)
-            if parsed is None:
-                return ToolResult(ok=False, message=f"Invalid start_time: '{inp.start_time}'")
-            ev.start_time = parsed
-            updated_fields.append("start_time")
-        if inp.end_time is not None:
-            ev.end_time = None if inp.end_time == "" else _parse_datetime(inp.end_time)
-            updated_fields.append("end_time")
-        db.commit()
-        return ToolResult(
-            ok=True,
-            message=f"Updated event #{ev.id}: '{ev.title}' (fields: {', '.join(updated_fields)})",
-            data={"id": ev.id, "title": ev.title, "updated_fields": updated_fields},
-        )
-
-    if name == "delete_calendar_event":
-        inp = DeleteCalendarEventInput.model_validate(args)
-        ev = db.get(CalendarEvent, inp.event_id)
-        if not ev:
-            return ToolResult(ok=False, message=f"Event #{inp.event_id} not found.")
-        title = ev.title
-        db.delete(ev)
-        db.commit()
-        return ToolResult(
-            ok=True,
-            message=f"Deleted calendar event #{inp.event_id}: '{title}'",
-            data={"id": inp.event_id},
-        )
-
     if name == "draft_email":
         inp = DraftEmailInput.model_validate(args)
         draft = EmailDraft(to_field=inp.to, subject=inp.subject, body=inp.body)
@@ -738,7 +633,7 @@ def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
         )
 
     if name == "search_documents":
-        from app.ai.rag import smart_search
+        from app.ai.rag import async_smart_search
 
         inp = SearchDocumentsInput.model_validate(args)
         n = min(inp.n_results, 10)
@@ -754,11 +649,13 @@ def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
                 # ID doesn't exist — fall back to searching all documents
                 valid_doc_id = None
 
-        results = smart_search(inp.query, valid_doc_id, n, doc_summary=doc_summary)
+        results = await async_smart_search(
+            inp.query, valid_doc_id, n, doc_summary=doc_summary
+        )
 
         # If filtered search returned nothing, retry across all documents
         if not results and valid_doc_id is not None:
-            results = smart_search(inp.query, None, n)
+            results = await async_smart_search(inp.query, None, n)
 
         # Enrich results with filenames from SQL
         doc_ids = {r["document_id"] for r in results if r.get("document_id")}
@@ -831,7 +728,7 @@ def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
         project = db.get(Project, inp.project_id)
         if project is None:
             return ToolResult(ok=False, message=f"Project {inp.project_id} not found.")
-        effective_n = inp.n_results
+        effective_n = min(inp.n_results, 20)
         staleness_ref = project.last_accessed or project.updated_at
         if staleness_ref:
             days = (datetime.now(timezone.utc).replace(tzinfo=None) - staleness_ref).days
@@ -865,11 +762,3 @@ def _parse_date(value: str | None) -> datetime | None:
             return None
 
 
-def _parse_datetime(value: str | None) -> datetime | None:
-    """Parse an ISO datetime string; returns None on failure or empty input."""
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return None

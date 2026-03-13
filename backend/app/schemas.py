@@ -29,6 +29,10 @@ class UserProfileOut(BaseModel):
 # ── Project schemas ───────────────────────────────────────────────────────────
 
 
+class LogEpisodeRequest(BaseModel):
+    memory_text: str
+
+
 class ProjectCreate(BaseModel):
     name: str
     description: str | None = None
@@ -100,7 +104,7 @@ class ChatMessage(BaseModel):
 
 class MessageOut(BaseModel):
     id: int
-    role: str
+    role: Literal["user", "assistant", "morning_brief"]
     content: str
     created_at: datetime
 

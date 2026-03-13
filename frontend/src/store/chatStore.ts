@@ -2,7 +2,7 @@ import { create } from 'zustand'
 
 export interface ChatMessage {
   id: string
-  role: 'user' | 'assistant' | 'email_draft'
+  role: 'user' | 'assistant' | 'email_draft' | 'morning_brief'
   content: string
 }
 
@@ -11,6 +11,7 @@ interface ChatState {
   isLoading: boolean
   addMessage: (msg: ChatMessage) => void
   updateLastAssistantMessage: (content: string) => void
+  updateLastBriefMessage: (content: string) => void
   setMessages: (msgs: ChatMessage[]) => void
   setLoading: (v: boolean) => void
 }
@@ -24,6 +25,17 @@ export const useChatStore = create<ChatState>((set) => ({
       const msgs = [...s.messages]
       for (let i = msgs.length - 1; i >= 0; i--) {
         if (msgs[i].role === 'assistant') {
+          msgs[i] = { ...msgs[i], content }
+          break
+        }
+      }
+      return { messages: msgs }
+    }),
+  updateLastBriefMessage: (content) =>
+    set((s) => {
+      const msgs = [...s.messages]
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].role === 'morning_brief') {
           msgs[i] = { ...msgs[i], content }
           break
         }

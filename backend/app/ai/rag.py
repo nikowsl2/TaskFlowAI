@@ -5,9 +5,10 @@ import json
 import logging
 from functools import lru_cache
 
+from app.config import settings as _settings
+
 logger = logging.getLogger(__name__)
 
-CHROMA_PATH = "backend/chroma_db/"
 COLLECTION_NAME = "taskflow_docs"
 
 QUERY_REWRITE_PROMPT = """\
@@ -145,7 +146,7 @@ def _get_collection():
             "OPENAI_API_KEY is required for document embeddings even when AI_PROVIDER=anthropic."
         )
 
-    client = chromadb.PersistentClient(path=CHROMA_PATH)
+    client = chromadb.PersistentClient(path=_settings.CHROMA_DB_PATH)
     embedding_fn = OpenAIEmbeddingFunction(
         api_key=settings.OPENAI_API_KEY,
         model_name="text-embedding-3-small",
@@ -316,9 +317,11 @@ async def async_smart_search(
     query: str,
     document_id: int | None = None,
     n_results: int = 5,
+    doc_summary: str | None = None,
 ) -> list[dict]:
-    """Async wrapper for smart_search."""
-    loop = asyncio.get_event_loop()
+    """Async wrapper for smart_search — runs blocking I/O in a thread."""
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
-        None, lambda: smart_search(query, document_id, n_results)
+        None,
+        lambda: smart_search(query, document_id, n_results, doc_summary=doc_summary),
     )

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.ai import episodic
 from app.database import get_db
 from app.models import Project
-from app.schemas import ProjectCreate, ProjectOut, ProjectUpdate
+from app.schemas import LogEpisodeRequest, ProjectCreate, ProjectOut, ProjectUpdate
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -54,14 +54,11 @@ def delete_project(project_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{project_id}/episodes", status_code=status.HTTP_201_CREATED)
-def log_episode(project_id: int, body: dict, db: Session = Depends(get_db)):
+def log_episode(project_id: int, body: LogEpisodeRequest, db: Session = Depends(get_db)):
     project = db.get(Project, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    memory_text = body.get("memory_text", "")
-    if not memory_text:
-        raise HTTPException(status_code=422, detail="memory_text is required")
-    episode_id = episodic.log_episode(project_id, memory_text)
+    episode_id = episodic.log_episode(project_id, body.memory_text)
     return {"episode_id": episode_id}
 
 

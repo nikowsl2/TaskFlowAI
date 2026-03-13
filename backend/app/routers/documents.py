@@ -23,6 +23,10 @@ async def upload_document(file: UploadFile, db: Session = Depends(get_db)):
     filename = file.filename or "untitled"
     content_bytes = await file.read()
 
+    # Reject files larger than 20 MB
+    if len(content_bytes) > 20 * 1024 * 1024:
+        raise HTTPException(413, "File too large. Maximum size is 20 MB.")
+
     # Validate file type
     if not (filename.endswith(".txt") or filename.endswith(".docx") or filename.endswith(".pdf")):
         raise HTTPException(415, "Only .txt, .docx, and .pdf files are supported.")

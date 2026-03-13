@@ -19,6 +19,11 @@ async def lifespan(app: FastAPI):
             conn.commit()
         except Exception:
             pass  # column already exists
+        try:
+            conn.execute(text("ALTER TABLE user_profiles ADD COLUMN last_brief_date DATE"))
+            conn.commit()
+        except Exception:
+            pass
     # Create DB tables on startup
     Base.metadata.create_all(bind=engine)
     yield

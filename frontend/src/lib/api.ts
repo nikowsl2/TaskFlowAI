@@ -58,7 +58,7 @@ export interface CalendarEventUpdate {
 
 export interface Message {
   id: number
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'morning_brief'
   content: string
   created_at: string
 }
@@ -191,6 +191,8 @@ export const docsApi = {
 export const chatApi = {
   history: () => api.get<Message[]>('/chat/history').then((r) => r.data),
   clearHistory: () => api.delete('/chat/history'),
+  morningBrief: (): Promise<Response> =>
+    fetch('/api/chat/brief', { method: 'POST' }),
 }
 
 const BASE_URL = '/api'
@@ -242,44 +244,56 @@ export interface ProjectUpdate {
   status?: 'active' | 'on-hold' | 'completed'
 }
 
+async function checkedFetch<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
+  const r = await fetch(input, init)
+  if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`)
+  return r.json() as Promise<T>
+}
+
+async function checkedFetchVoid(input: RequestInfo, init?: RequestInit): Promise<void> {
+  const r = await fetch(input, init)
+  if (!r.ok) throw new Error(`HTTP ${r.status}: ${r.statusText}`)
+}
+
 export const profileApi = {
   get: (): Promise<UserProfile> =>
-    fetch(`${BASE_URL}/profile/`).then((r) => r.json()),
+    checkedFetch(`${BASE_URL}/profile/`),
   update: (data: UserProfileUpdate): Promise<UserProfile> =>
-    fetch(`${BASE_URL}/profile/`, {
+    checkedFetch(`${BASE_URL}/profile/`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
-    }).then((r) => r.json()),
+    }),
 }
 
 export const projectsApi = {
   list: (): Promise<Project[]> =>
-    fetch(`${BASE_URL}/projects/`).then((r) => r.json()),
+    checkedFetch(`${BASE_URL}/projects/`),
   create: (data: ProjectCreate): Promise<Project> =>
-    fetch(`${BASE_URL}/projects/`, {
+    checkedFetch(`${BASE_URL}/projects/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
-    }).then((r) => r.json()),
+    }),
   update: (id: number, data: ProjectUpdate): Promise<Project> =>
-    fetch(`${BASE_URL}/projects/${id}`, {
+    checkedFetch(`${BASE_URL}/projects/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
-    }).then((r) => r.json()),
+    }),
   delete: (id: number): Promise<void> =>
-    fetch(`${BASE_URL}/projects/${id}`, { method: 'DELETE' }).then(() => undefined),
+    checkedFetchVoid(`${BASE_URL}/projects/${id}`, { method: 'DELETE' }),
   logEpisode: (id: number, memory_text: string): Promise<{ episode_id: string }> =>
-    fetch(`${BASE_URL}/projects/${id}/episodes`, {
+    checkedFetch(`${BASE_URL}/projects/${id}/episodes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ memory_text }),
-    }).then((r) => r.json()),
+    }),
   getEpisodes: (id: number): Promise<Episode[]> =>
-    fetch(`${BASE_URL}/projects/${id}/episodes`).then((r) => r.json()),
+    checkedFetch(`${BASE_URL}/projects/${id}/episodes`),
   deleteEpisode: (id: number, episodeId: string): Promise<void> =>
-    fetch(`${BASE_URL}/projects/${id}/episodes/${encodeURIComponent(episodeId)}`, {
-      method: 'DELETE',
-    }).then(() => undefined),
+    checkedFetchVoid(
+      `${BASE_URL}/projects/${id}/episodes/${encodeURIComponent(episodeId)}`,
+      { method: 'DELETE' },
+    ),
 }

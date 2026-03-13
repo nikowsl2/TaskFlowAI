@@ -24,7 +24,45 @@ function TypingIndicator() {
   )
 }
 
+const BRIEF_LS_KEY = 'taskflow-brief-date'
+const getTodayISO = () => {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+const shouldTriggerBrief = () => {
+  try { return localStorage.getItem(BRIEF_LS_KEY) !== getTodayISO() }
+  catch { return false }
+}
+const markBriefDone = () => {
+  try { localStorage.setItem(BRIEF_LS_KEY, getTodayISO()) }
+  catch { /* ignore */ }
+}
+
 function MessageBubble({ role, content }: { role: string; content: string }) {
+  if (role === 'morning_brief') {
+    return (
+      <div className="flex items-end gap-2">
+        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-2 font-mono text-[8px] text-muted-foreground">
+          TF
+        </div>
+        <div className="max-w-[85%] flex-1">
+          <div className="rounded-2xl rounded-bl-sm bg-surface px-3.5 py-2 text-sm leading-relaxed ring-1 ring-primary/20">
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <span className="font-mono text-[9px] uppercase tracking-wider text-primary/50">
+                Morning Brief
+              </span>
+              <div className="h-px flex-1 bg-primary/10" />
+            </div>
+            <pre className="whitespace-pre-wrap font-sans text-[13px]">{content}</pre>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (role === 'email_draft') {
     try {
       const draft: EmailDraftData = JSON.parse(content)
@@ -83,16 +121,71 @@ interface ChatPanelProps {
 
 export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanelProps) {
   const qc = useQueryClient()
-  const { messages, isLoading, addMessage, updateLastAssistantMessage, setMessages, setLoading } =
-    useChatStore()
+  const { messages, isLoading, addMessage, updateLastAssistantMessage,
+          updateLastBriefMessage, setMessages, setLoading } = useChatStore()
   const [input, setInput] = useState('')
   const [statusText, setStatusText] = useState<string | null>(null)
+  const [isBriefLoading, setIsBriefLoading] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const triggerMorningBrief = async () => {
+    const briefId = `brief-${Date.now()}`
+    addMessage({ id: briefId, role: 'morning_brief', content: '' })
+    setIsBriefLoading(true)
+    try {
+      const res = await chatApi.morningBrief()
+      if (res.status === 204) {
+        useChatStore.setState((s) => ({ messages: s.messages.filter((m) => m.id !== briefId) }))
+        return
+      }
+      if (!res.body) return
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let accumulated = ''
+      let sseBuffer = ''
+      let succeeded = false
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        sseBuffer += decoder.decode(value, { stream: true })
+        const events = sseBuffer.split('\n\n')
+        sseBuffer = events.pop() ?? ''
+        for (const event of events) {
+          const line = event.trim()
+          if (!line.startsWith('data: ')) continue
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.type === 'morning_brief_text') {
+              accumulated += data.content
+              updateLastBriefMessage(accumulated)
+            } else if (data.type === 'status') {
+              setStatusText(data.content)
+            } else if (data.type === 'morning_brief_done') {
+              succeeded = true
+              markBriefDone()
+              qc.invalidateQueries({ queryKey: ['tasks'] })
+            }
+          } catch { /* ignore */ }
+        }
+      }
+      if (!succeeded) {
+        useChatStore.setState((s) => ({ messages: s.messages.filter((m) => m.id !== briefId) }))
+      }
+    } catch {
+      useChatStore.setState((s) => ({ messages: s.messages.filter((m) => m.id !== briefId) }))
+    } finally {
+      setIsBriefLoading(false)
+      setStatusText(null)
+    }
+  }
 
   useEffect(() => {
     chatApi.history().then((hist) => {
       setMessages(hist.map((m) => ({ id: String(m.id), role: m.role, content: m.content })))
+      if (shouldTriggerBrief()) {
+        triggerMorningBrief()
+      }
     })
   }, [setMessages])
 
@@ -244,7 +337,7 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
         ) : (
           <div className="space-y-3">
             {messages.map((msg) =>
-              msg.role === 'assistant' && msg.content === '' && isLoading ? (
+              (msg.role === 'assistant' && msg.content === '' && isLoading) || (msg.role === 'morning_brief' && msg.content === '' && isBriefLoading) ? (
                 <TypingIndicator key={msg.id} />
               ) : (
                 <MessageBubble key={msg.id} role={msg.role} content={msg.content} />

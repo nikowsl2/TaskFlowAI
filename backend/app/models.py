@@ -1,6 +1,6 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date as date_type
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -106,6 +106,7 @@ class UserProfile(Base):
     preferences: Mapped[str | None] = mapped_column(Text, nullable=True)
     current_focus: Mapped[str | None] = mapped_column(Text, nullable=True)
     extra_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_brief_date: Mapped[date_type | None] = mapped_column(Date, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime,
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
         onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
