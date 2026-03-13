@@ -10,15 +10,17 @@ Adding a new tool requires:
   3. An entry in TOOL_DEFINITIONS (OpenAI format — Anthropic format is auto-derived)
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
-from app.models import CalendarEvent, Document, EmailDraft, Task
+from app.models import CalendarEvent, Document, EmailDraft, Project, Task, UserProfile
+from app.ai import episodic
 
 Priority = Literal["low", "medium", "high"]
+ProfileField = Literal["role_and_goals", "preferences", "current_focus", "extra_notes"]
 
 
 # ── Input models ──────────────────────────────────────────────────────────────
@@ -100,6 +102,31 @@ class ListDocumentsInput(BaseModel):
 class SearchDocumentsInput(BaseModel):
     query: str
     document_id: int | None = None
+    n_results: int = 5
+
+
+class UpdateUserProfileInput(BaseModel):
+    field: ProfileField
+    value: str  # empty string clears the field
+
+
+class ListProjectsInput(BaseModel):
+    pass
+
+
+class CreateProjectInput(BaseModel):
+    name: str
+    description: str | None = None
+
+
+class LogProjectEventInput(BaseModel):
+    project_id: int
+    memory_text: str
+
+
+class RecallProjectHistoryInput(BaseModel):
+    project_id: int
+    query: str
     n_results: int = 5
 
 
@@ -336,6 +363,82 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_user_profile",
+            "description": "Call proactively when you learn role, preferences, focus, or any durable context about the user. Do not wait to be asked.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "field": {
+                        "type": "string",
+                        "enum": ["role_and_goals", "preferences", "current_focus", "extra_notes"],
+                        "description": "Which profile field to update.",
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "New value. Pass empty string to clear the field.",
+                    },
+                },
+                "required": ["field", "value"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_projects",
+            "description": "List all projects. Call this first to get project IDs before calling log_project_event or recall_project_history.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_project",
+            "description": "Create a new project for tracking episodic memory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Project name."},
+                    "description": {"type": "string", "description": "Optional project description."},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "log_project_event",
+            "description": "Log a significant milestone, decision, or event for a project. Call after completions, decisions, deadlines, blockers, scope changes. Always call list_projects first for IDs.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "integer", "description": "Project ID (from list_projects)."},
+                    "memory_text": {"type": "string", "description": "What happened or was decided."},
+                },
+                "required": ["project_id", "memory_text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "recall_project_history",
+            "description": "Use when user asks about project history, past decisions, or earlier context. Always call list_projects first for IDs.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "integer", "description": "Project ID."},
+                    "query": {"type": "string", "description": "What to search for in project history."},
+                    "n_results": {"type": "integer", "description": "Max episodes to return (default 5)."},
+                },
+                "required": ["project_id", "query"],
             },
         },
     },
@@ -675,6 +778,72 @@ def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
             ok=True,
             message=f"Found {len(results)} chunk(s) for query: '{inp.query}'",
             data={"results": results},
+        )
+
+    if name == "update_user_profile":
+        inp = UpdateUserProfileInput.model_validate(args)
+        profile = db.get(UserProfile, 1)
+        if profile is None:
+            profile = UserProfile(id=1)
+            db.add(profile)
+        setattr(profile, inp.field, inp.value or None)
+        db.commit()
+        return ToolResult(ok=True, message=f"Updated {inp.field} in user profile.")
+
+    if name == "list_projects":
+        ListProjectsInput.model_validate(args)
+        projects = db.query(Project).order_by(Project.created_at.desc()).all()
+        return ToolResult(
+            ok=True,
+            message=f"Found {len(projects)} project(s).",
+            data={"projects": [
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "description": p.description,
+                    "status": p.status,
+                    "last_accessed": p.last_accessed.isoformat() if p.last_accessed else None,
+                }
+                for p in projects
+            ]},
+        )
+
+    if name == "create_project":
+        inp = CreateProjectInput.model_validate(args)
+        project = Project(name=inp.name, description=inp.description)
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+        return ToolResult(ok=True, message=f"Created project '{inp.name}' (id={project.id}).", data={"id": project.id, "name": project.name})
+
+    if name == "log_project_event":
+        inp = LogProjectEventInput.model_validate(args)
+        project = db.get(Project, inp.project_id)
+        if project is None:
+            return ToolResult(ok=False, message=f"Project {inp.project_id} not found.")
+        episode_id = episodic.log_episode(inp.project_id, inp.memory_text)
+        project.last_accessed = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.commit()
+        return ToolResult(ok=True, message=f"Logged episode {episode_id} for project '{project.name}'.")
+
+    if name == "recall_project_history":
+        inp = RecallProjectHistoryInput.model_validate(args)
+        project = db.get(Project, inp.project_id)
+        if project is None:
+            return ToolResult(ok=False, message=f"Project {inp.project_id} not found.")
+        effective_n = inp.n_results
+        staleness_ref = project.last_accessed or project.updated_at
+        if staleness_ref:
+            days = (datetime.now(timezone.utc).replace(tzinfo=None) - staleness_ref).days
+            if days > 30:
+                effective_n = max(2, inp.n_results // 2)
+        episodes = episodic.recall_episodes(inp.project_id, inp.query, effective_n)
+        project.last_accessed = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.commit()
+        return ToolResult(
+            ok=True,
+            message=f"Found {len(episodes)} episode(s) for project '{project.name}'.",
+            data={"episodes": [e["text"] for e in episodes]},
         )
 
     return ToolResult(ok=False, message=f"Unknown tool: '{name}'")

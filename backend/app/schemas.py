@@ -6,6 +6,51 @@ from typing import Literal
 from pydantic import BaseModel
 
 
+# ── User Profile schemas ──────────────────────────────────────────────────────
+
+
+class UserProfileUpdate(BaseModel):
+    role_and_goals: str | None = None
+    preferences: str | None = None
+    current_focus: str | None = None
+    extra_notes: str | None = None
+
+
+class UserProfileOut(BaseModel):
+    id: int
+    role_and_goals: str | None = None
+    preferences: str | None = None
+    current_focus: str | None = None
+    extra_notes: str | None = None
+    updated_at: datetime | None = None
+    model_config = {"from_attributes": True}
+
+
+# ── Project schemas ───────────────────────────────────────────────────────────
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    description: str | None = None
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    status: Literal["active", "on-hold", "completed"] | None = None
+
+
+class ProjectOut(BaseModel):
+    id: int
+    name: str
+    description: str | None = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    last_accessed: datetime | None = None
+    model_config = {"from_attributes": True}
+
+
 # ── Task schemas ──────────────────────────────────────────────────────────────
 
 

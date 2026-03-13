@@ -192,3 +192,94 @@ export const chatApi = {
   history: () => api.get<Message[]>('/chat/history').then((r) => r.data),
   clearHistory: () => api.delete('/chat/history'),
 }
+
+const BASE_URL = '/api'
+
+// ── User Profile ──────────────────────────────────────────────────────────────
+
+export interface UserProfile {
+  id: number
+  role_and_goals: string | null
+  preferences: string | null
+  current_focus: string | null
+  extra_notes: string | null
+  updated_at: string | null
+}
+
+export interface UserProfileUpdate {
+  role_and_goals?: string | null
+  preferences?: string | null
+  current_focus?: string | null
+  extra_notes?: string | null
+}
+
+// ── Projects ──────────────────────────────────────────────────────────────────
+
+export interface Project {
+  id: number
+  name: string
+  description: string | null
+  status: 'active' | 'on-hold' | 'completed'
+  created_at: string
+  updated_at: string
+  last_accessed: string | null
+}
+
+export interface Episode {
+  id: string
+  text: string
+  logged_at_ms: number | null
+}
+
+export interface ProjectCreate {
+  name: string
+  description?: string | null
+}
+
+export interface ProjectUpdate {
+  name?: string
+  description?: string | null
+  status?: 'active' | 'on-hold' | 'completed'
+}
+
+export const profileApi = {
+  get: (): Promise<UserProfile> =>
+    fetch(`${BASE_URL}/profile/`).then((r) => r.json()),
+  update: (data: UserProfileUpdate): Promise<UserProfile> =>
+    fetch(`${BASE_URL}/profile/`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }).then((r) => r.json()),
+}
+
+export const projectsApi = {
+  list: (): Promise<Project[]> =>
+    fetch(`${BASE_URL}/projects/`).then((r) => r.json()),
+  create: (data: ProjectCreate): Promise<Project> =>
+    fetch(`${BASE_URL}/projects/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }).then((r) => r.json()),
+  update: (id: number, data: ProjectUpdate): Promise<Project> =>
+    fetch(`${BASE_URL}/projects/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }).then((r) => r.json()),
+  delete: (id: number): Promise<void> =>
+    fetch(`${BASE_URL}/projects/${id}`, { method: 'DELETE' }).then(() => undefined),
+  logEpisode: (id: number, memory_text: string): Promise<{ episode_id: string }> =>
+    fetch(`${BASE_URL}/projects/${id}/episodes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memory_text }),
+    }).then((r) => r.json()),
+  getEpisodes: (id: number): Promise<Episode[]> =>
+    fetch(`${BASE_URL}/projects/${id}/episodes`).then((r) => r.json()),
+  deleteEpisode: (id: number, episodeId: string): Promise<void> =>
+    fetch(`${BASE_URL}/projects/${id}/episodes/${encodeURIComponent(episodeId)}`, {
+      method: 'DELETE',
+    }).then(() => undefined),
+}

@@ -3,13 +3,22 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from sqlalchemy import text
+
 from app.config import settings
 from app.database import Base, engine
-from app.routers import chat, documents, email_drafts, events, logs, meeting, notes, tasks
+from app.routers import chat, documents, email_drafts, events, logs, meeting, notes, profile, projects, tasks
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Migrate existing tables before create_all
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE projects ADD COLUMN last_accessed DATETIME"))
+            conn.commit()
+        except Exception:
+            pass  # column already exists
     # Create DB tables on startup
     Base.metadata.create_all(bind=engine)
     yield
@@ -33,6 +42,8 @@ app.include_router(notes.router, prefix="/api")
 app.include_router(email_drafts.router, prefix="/api")
 app.include_router(logs.router, prefix="/api")
 app.include_router(documents.router, prefix="/api")
+app.include_router(profile.router, prefix="/api")
+app.include_router(projects.router, prefix="/api")
 
 
 @app.get("/api/health")

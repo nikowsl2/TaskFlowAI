@@ -97,3 +97,28 @@ class CalendarEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
+
+
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)  # always 1
+    role_and_goals: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preferences: Mapped[str | None] = mapped_column(Text, nullable=True)
+    current_focus: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extra_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+
+class Project(Base):
+    __tablename__ = "projects"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at: Mapped[datetime] = mapped_column(DateTime,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    last_accessed: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -2,13 +2,14 @@
 
 import json
 from collections.abc import AsyncGenerator
-from datetime import date
+from datetime import date, datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.ai.tools import ANTHROPIC_TOOL_DEFINITIONS, TOOL_DEFINITIONS, execute_tool
 from app import log_store
+from app.ai.tools import ANTHROPIC_TOOL_DEFINITIONS, TOOL_DEFINITIONS, execute_tool
 from app.config import settings
+from app.models import Project, UserProfile
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are TaskFlow AI, a task management and scheduling assistant. \
@@ -16,7 +17,7 @@ You help users manage their task list and calendar using the available tools.
 
 Today's date is {today}. Use this to resolve relative dates like "next Monday" or "Thursday".
 
-Capabilities:
+{profile}{projects}Capabilities:
 - create_task           — add a new task with optional description, priority, and deadline
 - list_tasks            — show all tasks with IDs (call this first when you need a task ID)
 - update_task           — edit any field: rename, rewrite description, change priority, \
@@ -28,6 +29,10 @@ set or clear a deadline, or reopen a completed task
 - get_email_draft       — retrieve a draft's current content
 - list_documents        — show all uploaded documents with IDs and AI summaries
 - search_documents      — retrieve semantically relevant text chunks from documents
+- update_user_profile   — save durable user context (role, prefs, focus, notes)
+- list_projects / create_project — manage project registry
+- log_project_event     — record milestones and decisions to episodic memory
+- recall_project_history — retrieve past project context via semantic search
 
 Rules:
 1. If the user refers to a task by name rather than ID, call list_tasks first to find the ID.
@@ -39,6 +44,14 @@ to any tool. Never pass strings like "next Wednesday" or "Friday" — use the ac
 "2026-03-18". Use today's date ({today}) as the reference to compute the exact calendar date.
 6. MEETINGS & SCHEDULED EVENTS: There is no calendar tool available. Convert any scheduled sync, \
 call, or meeting into a task with an appropriate due_date instead.
+7. MEMORY: Call update_user_profile proactively when the user reveals role, preferences, current \
+focus, or any durable personal context. Field routing: role/team → role_and_goals; \
+style/tools/workflows → preferences; active sprint/milestone → current_focus; misc → extra_notes.
+8. PROJECT EVENTS: Call log_project_event after significant milestones, decisions, deadlines, \
+blockers, or scope changes. Always call list_projects first to get project IDs. Offer to create \
+a project if none exists when the user discusses ongoing project work.
+9. PROJECT RECALL: Call recall_project_history before answering questions about past project work, \
+previous decisions, or earlier context. Always call list_projects first to get project IDs.
 
 Meeting notes processing:
 When the user shares meeting notes or asks you to process notes:
@@ -79,8 +92,47 @@ set due_date in YYYY-MM-DD format for any deadline or meeting date (resolve rela
 """
 
 
-def _build_system_prompt() -> str:
-    return SYSTEM_PROMPT_TEMPLATE.format(today=date.today().isoformat())
+def _build_system_prompt(db: Session) -> str:
+    profile = db.get(UserProfile, 1)
+    profile_text = ""
+    if profile:
+        parts = []
+        if profile.role_and_goals:
+            parts.append(f"Role & Goals: {profile.role_and_goals}")
+        if profile.preferences:
+            parts.append(f"Preferences: {profile.preferences}")
+        if profile.current_focus:
+            parts.append(f"Current Focus: {profile.current_focus}")
+        if profile.extra_notes:
+            parts.append(f"Extra Notes: {profile.extra_notes}")
+        if parts:
+            profile_text = "User Profile (always take this into account):\n" + "\n".join(parts) + "\n\n"
+
+    staleness_text = ""
+    try:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        projects = db.query(Project).order_by(Project.created_at.desc()).all()
+        if projects:
+            lines = []
+            for p in projects:
+                ref = p.last_accessed or p.updated_at
+                days = (now - ref).days if ref else None
+                if days is not None:
+                    note = f", last active {days} days ago"
+                    if days > 30:
+                        note += " — consider archiving"
+                else:
+                    note = ""
+                lines.append(f"- {p.name} ({p.status}{note})")
+            staleness_text = "Projects:\n" + "\n".join(lines) + "\n\n"
+    except Exception:
+        staleness_text = ""
+
+    return SYSTEM_PROMPT_TEMPLATE.format(
+        today=date.today().isoformat(),
+        profile=profile_text,
+        projects=staleness_text,
+    )
 
 
 async def run_agent(
@@ -103,7 +155,7 @@ async def _openai_loop(
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-    system_prompt = _build_system_prompt()
+    system_prompt = _build_system_prompt(db)
     msgs = [{"role": "system", "content": system_prompt}] + list(messages)
     tool_call_count = 0
 
@@ -201,7 +253,7 @@ async def _anthropic_loop(
     from anthropic import AsyncAnthropic
 
     client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-    system_prompt = _build_system_prompt()
+    system_prompt = _build_system_prompt(db)
     anthropic_msgs = [m for m in messages if m["role"] != "system"]
     tool_call_count = 0
 
@@ -307,5 +359,10 @@ def _status_label(tool_name: str) -> str:
         "get_email_draft": "Loading draft\u2026",
         "list_documents": "Reading document library\u2026",
         "search_documents": "Searching documents\u2026",
+        "update_user_profile": "Updating user profile\u2026",
+        "list_projects": "Listing projects\u2026",
+        "create_project": "Creating project\u2026",
+        "log_project_event": "Logging project event\u2026",
+        "recall_project_history": "Recalling project history\u2026",
     }
     return labels.get(tool_name, f"Running {tool_name}\u2026")
