@@ -20,6 +20,35 @@ An AI-powered task management workspace with natural language chat, meeting note
 - **Ambiguity Resolution** — asks clarifying questions instead of guessing
 - Supports both OpenAI and Anthropic as interchangeable providers
 
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant React as React Frontend
+    participant Fast as FastAPI Backend
+    participant LLM as OpenAI/Anthropic
+    participant DB as SQLite / ChromaDB
+
+    User->>React: "Add 'Review designs' to my tasks and draft an email to Sarah."
+    React->>Fast: POST /api/chat {message}
+    Fast->>LLM: Send user message + 17 Tool Schemas
+
+    Note over LLM,Fast: Autonomous Reasoning Loop
+    LLM-->>Fast: Tool Call Request: `create_task`
+    Fast->>DB: Execute SQL Insert (Task)
+    DB-->>Fast: Task ID returned
+    Fast->>LLM: Tool Result: Task created successfully
+
+    LLM-->>Fast: Tool Call Request: `draft_email`
+    Fast->>DB: Save Email Draft
+    DB-->>Fast: Draft ID returned
+    Fast->>LLM: Tool Result: Draft saved successfully
+
+    LLM-->>Fast: Final Text Response
+    Fast-->>React: "I've added the task and drafted the email!"
+    React-->>User: Renders chat & instantly updates UI state
+```
+
 ### Document Knowledge Base (RAG)
 - Upload documents (TXT, DOCX, PDF, MD, CSV) up to 20 MB
 - AI-generated summaries on upload
