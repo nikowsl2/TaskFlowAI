@@ -42,6 +42,49 @@ An AI-powered task management workspace with natural language chat, meeting note
 - Dark and light theme with toggle (persisted to localStorage)
 - Inter font, responsive layout, smooth transitions
 
+## Architecture
+
+```mermaid
+graph TD
+    subgraph Frontend [React Frontend]
+        UI[UI Components / Tailwind]
+        State[Zustand / React Query]
+    end
+
+    subgraph Backend[FastAPI Backend]
+        Router[API Routers]
+        Agent[Agentic Loop & Tools]
+        RAG[RAG Pipeline]
+    end
+
+    subgraph Databases [Data Storage]
+        SQL[(SQLite)]
+        Vector[(ChromaDB)]
+    end
+
+    subgraph External [External APIs]
+        LLM((OpenAI / Anthropic))
+    end
+
+    %% Connections
+    UI <-->|REST API| Router
+    State <--> UI
+    Router <--> Agent
+    Agent <-->|Prompt / Tool Calls| LLM
+    Agent --> RAG
+    Router <-->|ORM| SQL
+    RAG <-->|Embeddings| Vector
+    RAG <-->|Metadata| SQL
+
+    classDef react fill:#61dafb,stroke:#333,stroke-width:2px,color:#000;
+    classDef python fill:#3776ab,stroke:#333,stroke-width:2px,color:#fff;
+    classDef db fill:#f2a900,stroke:#333,stroke-width:2px,color:#000;
+
+    class Frontend react;
+    class Backend python;
+    class Databases db;
+```
+
 ## Tech Stack
 
 | Layer | Technologies |
