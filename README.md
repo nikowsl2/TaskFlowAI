@@ -54,6 +54,30 @@ sequenceDiagram
 - AI-generated summaries on upload
 - Semantic search with BM25 + embedding reranking and source citations
 
+```mermaid
+graph LR
+    subgraph Ingestion [Ingestion Pipeline]
+        Doc[Upload PDF/Notes/Event] --> Parser[Text Extraction & Chunking]
+    end
+
+    subgraph Storage [Dual-Database Storage]
+        Meta[Generate Metadata & AI Summary] --> SQL[(SQLite)]
+        Embed[Generate Vector Embeddings] --> Chroma[(ChromaDB)]
+    end
+
+    subgraph Retrieval [Agentic Retrieval]
+        Agent{AI Agent} -->|1. List available files/projects| SQL
+        Agent -->|2. Semantic Search Specific ID| Chroma
+    end
+
+    Parser --> Meta
+    Parser --> Embed
+    SQL -.->|Document/Project ID links to chunks| Chroma
+
+    classDef core fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px;
+    class SQL,Chroma core;
+```
+
 ### Meeting Notes
 - Paste or upload meeting notes for AI extraction
 - Automatically identifies action items with priority and deadline inference
