@@ -593,7 +593,7 @@ export default function MeetingNotesView({ compact }: { compact?: boolean }) {
                 {compact ? '.txt / .docx / .pdf' : 'Upload .txt or .docx · drag & drop or click'}
               </span>
             )}
-            <input ref={fileInputRef} type="file" accept=".txt,.docx,.doc" onChange={handleFileInput} className="hidden" />
+            <input ref={fileInputRef} type="file" accept=".txt,.docx,.pdf" onChange={handleFileInput} className="hidden" />
           </div>
 
           {error && (

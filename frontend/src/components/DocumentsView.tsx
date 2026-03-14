@@ -99,7 +99,7 @@ export default function DocumentsView() {
           accept=".txt,.docx,.pdf"
           multiple
           className="hidden"
-          onChange={(e) => handleFiles(e.target.files)}
+          onChange={(e) => { handleFiles(e.target.files); e.target.value = '' }}
         />
 
         {uploadDoc.isPending ? (

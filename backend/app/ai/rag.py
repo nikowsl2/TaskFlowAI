@@ -10,6 +10,7 @@ from app.config import settings as _settings
 logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "taskflow_docs"
+MIN_SCORE = 0.25
 
 QUERY_REWRITE_PROMPT = """\
 You are an expert research analyst helping retrieve relevant passages from a document.
@@ -51,8 +52,15 @@ def rewrite_queries(query: str, doc_summary: str | None = None) -> list[str]:
     """Use LLM to rewrite/decompose a query into search-optimized variants.
 
     Falls back to the original query on any error so search never breaks.
+    Short, specific queries without doc context skip LLM rewriting entirely.
     """
     from app.config import settings
+
+    # Fast path: short, specific queries don't benefit from rewriting
+    word_count = len(query.split())
+    if word_count <= 4 and doc_summary is None:
+        logger.info("Query rewrite: skipping (short query, no doc context): %r", query)
+        return [query]
 
     try:
         raw = _call_rewrite_llm(query, settings, doc_summary)
@@ -154,6 +162,7 @@ def _get_collection():
     return client.get_or_create_collection(
         name=COLLECTION_NAME,
         embedding_function=embedding_fn,
+        metadata={"hnsw:space": "cosine"},
     )
 
 
@@ -250,6 +259,72 @@ def search_chunks(
     ]
 
 
+def _bm25_search(
+    query: str,
+    document_id: int | None = None,
+    n_results: int = 10,
+) -> list[dict]:
+    """Keyword search using BM25 over stored chunks."""
+    from rank_bm25 import BM25Okapi
+
+    collection = _get_collection()
+    where = {"document_id": document_id} if document_id is not None else None
+
+    stored = collection.get(where=where, include=["documents", "metadatas"])
+    ids = stored.get("ids", [])
+    docs = stored.get("documents", [])
+    metadatas = stored.get("metadatas", [])
+
+    if not ids:
+        return []
+
+    tokenized = [d.lower().split() for d in docs]
+    bm25 = BM25Okapi(tokenized)
+    scores = bm25.get_scores(query.lower().split())
+
+    # Normalize scores to 0-1 range
+    max_score = max(scores) if len(scores) > 0 else 1.0
+    if max_score == 0:
+        max_score = 1.0
+
+    indexed = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)[:n_results]
+    return [
+        {
+            "id": ids[i],
+            "chunk_text": docs[i],
+            "document_id": metadatas[i].get("document_id"),
+            "page_num": metadatas[i].get("page_num"),
+            "score": round(float(s) / max_score, 4),
+        }
+        for i, s in indexed
+        if s > 0
+    ]
+
+
+def _rrf_merge(
+    semantic_results: list[dict],
+    bm25_results: list[dict],
+    k: int = 60,
+) -> list[dict]:
+    """Reciprocal Rank Fusion: merge two ranked lists into one."""
+    scores: dict[str, float] = {}
+    data: dict[str, dict] = {}
+
+    for rank, r in enumerate(semantic_results):
+        cid = r["id"]
+        scores[cid] = scores.get(cid, 0) + 1.0 / (k + rank)
+        data[cid] = r
+
+    for rank, r in enumerate(bm25_results):
+        cid = r["id"]
+        scores[cid] = scores.get(cid, 0) + 1.0 / (k + rank)
+        if cid not in data:
+            data[cid] = r
+
+    merged = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    return [{**data[cid], "score": round(s, 4)} for cid, s in merged]
+
+
 def _diversify(ranked: list[dict], n_results: int, max_per_page: int = 2) -> list[dict]:
     """Prefer top-scoring chunks but cap results from any single page.
 
@@ -301,12 +376,16 @@ def smart_search(
 
     seen: dict[str, dict] = {}  # chunk_id → best result
     for q in queries:
-        for result in search_chunks(q, document_id, per_query):
+        semantic = search_chunks(q, document_id, per_query)
+        bm25 = _bm25_search(q, document_id, per_query)
+        merged = _rrf_merge(semantic, bm25)
+        for result in merged:
             chunk_id = result["id"]
             if chunk_id not in seen or result["score"] > seen[chunk_id]["score"]:
                 seen[chunk_id] = result
 
     ranked = sorted(seen.values(), key=lambda r: r["score"], reverse=True)
+    ranked = [r for r in ranked if r["score"] >= MIN_SCORE]
     for r in ranked:
         r.pop("id", None)
 

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
-import { chatApi } from '@/lib/api'
-import { useChatStore } from '@/store/chatStore'
+import { chatApi, meetingApi } from '@/lib/api'
+import { useChatStore, type AttachmentLabel } from '@/store/chatStore'
+import { useAttachmentStore, type ContextItem } from '@/store/attachmentStore'
 import { EmailDraftCard, type EmailDraftData } from './EmailDraftCard'
+import ContextPicker from './ContextPicker'
 
 function TypingIndicator() {
   return (
@@ -41,7 +43,7 @@ const markBriefDone = () => {
   catch { /* ignore */ }
 }
 
-function MessageBubble({ role, content }: { role: string; content: string }) {
+function MessageBubble({ role, content, attachments }: { role: string; content: string; attachments?: AttachmentLabel[] }) {
   if (role === 'morning_brief') {
     return (
       <div className="flex items-end gap-2">
@@ -100,10 +102,32 @@ function MessageBubble({ role, content }: { role: string; content: string }) {
             : 'rounded-2xl rounded-bl-sm bg-surface text-foreground'
         )}
       >
+        {isUser && attachments && attachments.length > 0 && (
+          <div className="mb-1.5 flex flex-wrap gap-1">
+            {attachments.map((a, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center gap-0.5 rounded-full bg-primary-foreground/15 px-1.5 py-0.5 text-[10px]"
+              >
+                <span>{CHIP_ICONS[a.type] ?? '📎'}</span>
+                <span className="max-w-[100px] truncate">{a.label}</span>
+              </span>
+            ))}
+          </div>
+        )}
         <pre className="whitespace-pre-wrap font-sans text-[13px]">{content}</pre>
       </div>
     </div>
   )
+}
+
+const CHIP_ICONS: Record<string, string> = {
+  task: '☑',
+  note: '📝',
+  email_draft: '✉',
+  document: '📄',
+  project: '📁',
+  file: '📄',
 }
 
 const SUGGESTIONS = [
@@ -112,6 +136,16 @@ const SUGGESTIONS = [
   'Add a high-priority task: Review Q3 report',
   'Schedule a team meeting for tomorrow at 2pm',
 ]
+
+function getChipLabel(item: ContextItem): string {
+  switch (item.type) {
+    case 'task': return item.title
+    case 'note': return item.title
+    case 'email_draft': return item.subject
+    case 'document': return item.title
+    case 'project': return item.name
+  }
+}
 
 interface ChatPanelProps {
   onSwitchMode?: () => void
@@ -126,8 +160,39 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
   const [input, setInput] = useState('')
   const [statusText, setStatusText] = useState<string | null>(null)
   const [isBriefLoading, setIsBriefLoading] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const pickerContainerRef = useRef<HTMLDivElement>(null)
+
+  const briefTriggeredRef = useRef(false)
+
+  const { contextItems, files, addFile, removeContextItem, removeFile, clearAll } =
+    useAttachmentStore()
+  const hasAttachments = contextItems.length > 0 || files.length > 0
+
+  // Close picker on click outside
+  useEffect(() => {
+    if (!pickerOpen) return
+    const handler = (e: MouseEvent) => {
+      if (pickerContainerRef.current && !pickerContainerRef.current.contains(e.target as Node)) {
+        setPickerOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [pickerOpen])
+
+  // Close picker on Escape
+  useEffect(() => {
+    if (!pickerOpen) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPickerOpen(false)
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [pickerOpen])
 
   const triggerMorningBrief = async () => {
     const briefId = `brief-${Date.now()}`
@@ -139,7 +204,10 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
         useChatStore.setState((s) => ({ messages: s.messages.filter((m) => m.id !== briefId) }))
         return
       }
-      if (!res.body) return
+      if (!res.ok || !res.body) {
+        useChatStore.setState((s) => ({ messages: s.messages.filter((m) => m.id !== briefId) }))
+        return
+      }
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let accumulated = ''
@@ -149,24 +217,32 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
         const { done, value } = await reader.read()
         if (done) break
         sseBuffer += decoder.decode(value, { stream: true })
-        const events = sseBuffer.split('\n\n')
-        sseBuffer = events.pop() ?? ''
-        for (const event of events) {
-          const line = event.trim()
-          if (!line.startsWith('data: ')) continue
-          try {
-            const data = JSON.parse(line.slice(6))
-            if (data.type === 'morning_brief_text') {
-              accumulated += data.content
-              updateLastBriefMessage(accumulated)
-            } else if (data.type === 'status') {
-              setStatusText(data.content)
-            } else if (data.type === 'morning_brief_done') {
-              succeeded = true
-              markBriefDone()
-              qc.invalidateQueries({ queryKey: ['tasks'] })
-            }
-          } catch { /* ignore */ }
+        const lines = sseBuffer.split('\n')
+        sseBuffer = lines.pop() ?? ''
+        let eventData = ''
+        for (const rawLine of lines) {
+          const line = rawLine.trimEnd()
+          if (line.startsWith('data: ')) {
+            eventData += (eventData ? '\n' : '') + line.slice(6)
+          } else if (line === '' && eventData) {
+            try {
+              const data = JSON.parse(eventData)
+              if (data.type === 'morning_brief_text') {
+                accumulated += data.content
+                updateLastBriefMessage(accumulated)
+              } else if (data.type === 'status') {
+                setStatusText(data.content)
+              } else if (data.type === 'morning_brief_done') {
+                succeeded = true
+                markBriefDone()
+                qc.invalidateQueries({ queryKey: ['tasks'] })
+              }
+            } catch { /* ignore */ }
+            eventData = ''
+          }
+        }
+        if (eventData) {
+          sseBuffer = 'data: ' + eventData + '\n' + sseBuffer
         }
       }
       if (!succeeded) {
@@ -183,9 +259,12 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
   useEffect(() => {
     chatApi.history().then((hist) => {
       setMessages(hist.map((m) => ({ id: String(m.id), role: m.role, content: m.content })))
-      if (shouldTriggerBrief()) {
+      if (shouldTriggerBrief() && !briefTriggeredRef.current) {
+        briefTriggeredRef.current = true
         triggerMorningBrief()
       }
+    }).catch((err) => {
+      console.error('Failed to load chat history:', err)
     })
   }, [setMessages])
 
@@ -193,24 +272,68 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  const handleFileAttach = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    // Reset input so the same file can be re-selected
+    e.target.value = ''
+
+    try {
+      let content: string
+      if (file.name.endsWith('.txt') || file.type === 'text/plain') {
+        content = await file.text()
+      } else {
+        // Use parseFile API for .docx, .pdf, etc.
+        const result = await meetingApi.parseFile(file)
+        content = result.text
+      }
+      addFile({ id: `file-${Date.now()}`, name: file.name, content })
+    } catch (err) {
+      console.error('Failed to read file:', err)
+    }
+  }
+
   const handleSend = async (text?: string) => {
     const msg = (text ?? input).trim()
     if (!msg || isLoading) return
     setInput('')
+    setPickerOpen(false)
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
     }
 
-    addMessage({ id: Date.now().toString(), role: 'user', content: msg })
+    // Capture current attachments before clearing
+    const attachedContext = [...contextItems]
+    const attachedFiles = [...files]
+    clearAll()
+
+    // Build attachment labels for display in the user bubble
+    const attachmentLabels: AttachmentLabel[] = [
+      ...attachedContext.map((item) => ({ type: item.type, label: getChipLabel(item) })),
+      ...attachedFiles.map((f) => ({ type: 'file', label: f.name })),
+    ]
+
+    addMessage({
+      id: Date.now().toString(),
+      role: 'user',
+      content: msg,
+      ...(attachmentLabels.length > 0 && { attachments: attachmentLabels }),
+    })
     addMessage({ id: (Date.now() + 1).toString(), role: 'assistant', content: '' })
     setLoading(true)
 
     try {
+      const body: Record<string, unknown> = { content: msg }
+      if (attachedContext.length > 0) body.context = attachedContext
+      if (attachedFiles.length > 0)
+        body.files = attachedFiles.map((f) => ({ name: f.name, content: f.content }))
+
       const res = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: msg }),
+        body: JSON.stringify(body),
       })
+      if (!res.ok) throw new Error(`Server error (${res.status})`)
       if (!res.body) throw new Error('No response body')
 
       const reader = res.body.getReader()
@@ -222,33 +345,45 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
         const { done, value } = await reader.read()
         if (done) break
         sseBuffer += decoder.decode(value, { stream: true })
-        // SSE events are delimited by double-newline; split on that boundary
-        const events = sseBuffer.split('\n\n')
-        // Keep the last (potentially incomplete) segment in the buffer
-        sseBuffer = events.pop() ?? ''
-        for (const event of events) {
-          const line = event.trim()
-          if (!line.startsWith('data: ')) continue
-          try {
-            const data = JSON.parse(line.slice(6))
-            if (data.type === 'text') {
-              setStatusText(null)
-              accumulated += data.content
-              updateLastAssistantMessage(accumulated)
-            } else if (data.type === 'status') {
-              setStatusText(data.content)
-            } else if (data.type === 'email_draft') {
-              addMessage({
-                id: `draft-${data.data.id}-${Date.now()}`,
-                role: 'email_draft',
-                content: JSON.stringify(data.data),
-              })
-            } else if (data.type === 'done') {
-              qc.invalidateQueries({ queryKey: ['tasks'] })
-              qc.invalidateQueries({ queryKey: ['events'] })
-              qc.invalidateQueries({ queryKey: ['drafts'] })
-            }
-          } catch { /* ignore */ }
+        // Parse SSE line-by-line: events are delimited by blank lines.
+        // Each "data: ..." line within an event contributes to its payload.
+        const lines = sseBuffer.split('\n')
+        // Keep the last incomplete line in the buffer
+        sseBuffer = lines.pop() ?? ''
+        let eventData = ''
+        for (const rawLine of lines) {
+          const line = rawLine.trimEnd()
+          if (line.startsWith('data: ')) {
+            eventData += (eventData ? '\n' : '') + line.slice(6)
+          } else if (line === '' && eventData) {
+            // Blank line = end of event
+            try {
+              const data = JSON.parse(eventData)
+              if (data.type === 'text') {
+                setStatusText(null)
+                accumulated += data.content
+                updateLastAssistantMessage(accumulated)
+              } else if (data.type === 'status') {
+                setStatusText(data.content)
+              } else if (data.type === 'email_draft') {
+                addMessage({
+                  id: `draft-${data.data.id}-${Date.now()}`,
+                  role: 'email_draft',
+                  content: JSON.stringify(data.data),
+                })
+              } else if (data.type === 'done') {
+                qc.invalidateQueries({ queryKey: ['tasks'] })
+                qc.invalidateQueries({ queryKey: ['events'] })
+                qc.invalidateQueries({ queryKey: ['drafts'] })
+              }
+            } catch { /* ignore malformed JSON */ }
+            eventData = ''
+          }
+        }
+        // If there's remaining eventData with no trailing blank line,
+        // prepend it back to the buffer so the next chunk picks it up
+        if (eventData) {
+          sseBuffer = 'data: ' + eventData + '\n' + sseBuffer
         }
       }
     } catch (err) {
@@ -340,7 +475,7 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
               (msg.role === 'assistant' && msg.content === '' && isLoading) || (msg.role === 'morning_brief' && msg.content === '' && isBriefLoading) ? (
                 <TypingIndicator key={msg.id} />
               ) : (
-                <MessageBubble key={msg.id} role={msg.role} content={msg.content} />
+                <MessageBubble key={msg.id} role={msg.role} content={msg.content} attachments={msg.attachments} />
               )
             )}
           </div>
@@ -350,37 +485,126 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
 
       {/* Input */}
       <div className="border-t border-border px-4 py-3">
-        <div className="flex items-end gap-2 rounded-xl border border-border bg-surface px-3 py-2.5 transition-colors focus-within:border-primary/40">
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask me to manage tasks or process meeting notes\u2026"
-            rows={1}
-            disabled={isLoading}
-            className="flex-1 resize-none bg-transparent text-sm leading-relaxed outline-none placeholder:text-muted-foreground/30 disabled:opacity-50"
-            style={{ maxHeight: '100px' }}
-            onInput={(e) => {
-              const t = e.currentTarget
-              t.style.height = 'auto'
-              t.style.height = `${Math.min(t.scrollHeight, 100)}px`
-            }}
-          />
-          <button
-            onClick={() => handleSend()}
-            disabled={isLoading || !input.trim()}
-            className={cn(
-              'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-all',
-              !isLoading && input.trim()
-                ? 'bg-primary text-primary-foreground hover:opacity-90'
-                : 'bg-muted text-muted-foreground/30'
+        <div className="relative" ref={pickerContainerRef}>
+          {/* Context picker popover */}
+          {pickerOpen && <ContextPicker />}
+
+          {/* Chip bar */}
+          {hasAttachments && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {contextItems.map((item) => (
+                <span
+                  key={`${item.type}-${item.id}`}
+                  className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-foreground"
+                >
+                  <span className="text-[10px]">{CHIP_ICONS[item.type]}</span>
+                  <span className="max-w-[120px] truncate">{getChipLabel(item)}</span>
+                  <button
+                    onClick={() => removeContextItem(item.type, item.id)}
+                    className="ml-0.5 text-muted-foreground/50 hover:text-foreground"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              {files.map((file) => (
+                <span
+                  key={file.id}
+                  className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-foreground"
+                >
+                  <span className="text-[10px]">📄</span>
+                  <span className="max-w-[120px] truncate">{file.name}</span>
+                  <button
+                    onClick={() => removeFile(file.id)}
+                    className="ml-0.5 text-muted-foreground/50 hover:text-foreground"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-end gap-2 rounded-xl border border-border bg-surface px-3 py-2.5 transition-colors focus-within:border-primary/40">
+            {/* Tool buttons (hidden in floating mode) */}
+            {!floating && (
+              <>
+                <button
+                  onClick={() => setPickerOpen((v) => !v)}
+                  className={cn(
+                    'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors',
+                    pickerOpen || hasAttachments
+                      ? 'text-primary'
+                      : 'text-muted-foreground/40 hover:text-muted-foreground hover:bg-surface-2'
+                  )}
+                  title="Attach context"
+                >
+                  <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+                    <path
+                      d="M13.5 6.5L7.5 12.5C6.17 13.83 4.08 13.83 2.75 12.5C1.42 11.17 1.42 9.08 2.75 7.75L8.75 1.75C9.58 0.92 10.92 0.92 11.75 1.75C12.58 2.58 12.58 3.92 11.75 4.75L5.75 10.75C5.34 11.16 4.66 11.16 4.25 10.75C3.84 10.34 3.84 9.66 4.25 9.25L9.5 4"
+                      stroke="currentColor"
+                      strokeWidth="1.3"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground/40 transition-colors hover:text-muted-foreground hover:bg-surface-2"
+                  title="Upload file"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path
+                      d="M7 1v8M4 4l3-3 3 3M2.5 9v2.5a1 1 0 001 1h7a1 1 0 001-1V9"
+                      stroke="currentColor"
+                      strokeWidth="1.3"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  hidden
+                  accept=".txt,.docx,.pdf"
+                  onChange={handleFileAttach}
+                />
+              </>
             )}
-          >
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-              <path d="M1 6.5h11M6.5 1l5.5 5.5-5.5 5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Ask me to manage tasks or process meeting notes\u2026"
+              rows={1}
+              disabled={isLoading}
+              className="flex-1 resize-none bg-transparent text-sm leading-relaxed outline-none placeholder:text-muted-foreground/30 disabled:opacity-50"
+              style={{ maxHeight: '100px' }}
+              onInput={(e) => {
+                const t = e.currentTarget
+                t.style.height = 'auto'
+                t.style.height = `${Math.min(t.scrollHeight, 100)}px`
+              }}
+            />
+            <button
+              onClick={() => handleSend()}
+              disabled={isLoading || !input.trim()}
+              className={cn(
+                'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-all',
+                !isLoading && input.trim()
+                  ? 'bg-primary text-primary-foreground hover:opacity-90'
+                  : 'bg-muted text-muted-foreground/30'
+              )}
+            >
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+                <path d="M1 6.5h11M6.5 1l5.5 5.5-5.5 5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
         </div>
         {!floating && (
           <p className="mt-1 text-center text-[10px] font-medium text-muted-foreground/25">

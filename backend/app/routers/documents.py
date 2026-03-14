@@ -28,8 +28,9 @@ async def upload_document(file: UploadFile, db: Session = Depends(get_db)):
         raise HTTPException(413, "File too large. Maximum size is 20 MB.")
 
     # Validate file type
-    if not (filename.endswith(".txt") or filename.endswith(".docx") or filename.endswith(".pdf")):
-        raise HTTPException(415, "Only .txt, .docx, and .pdf files are supported.")
+    allowed_ext = (".txt", ".docx", ".pdf", ".md", ".csv")
+    if not any(filename.lower().endswith(ext) for ext in allowed_ext):
+        raise HTTPException(415, f"Only {', '.join(allowed_ext)} files are supported.")
 
     # Extract text pages
     try:
@@ -47,12 +48,8 @@ async def upload_document(file: UploadFile, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(500, f"AI summary failed: {e}")
 
-    if filename.endswith(".txt"):
-        file_type = "txt"
-    elif filename.endswith(".docx"):
-        file_type = "docx"
-    else:
-        file_type = "pdf"
+    ext_to_type = {".txt": "txt", ".docx": "docx", ".pdf": "pdf", ".md": "md", ".csv": "csv"}
+    file_type = next((t for ext, t in ext_to_type.items() if filename.endswith(ext)), "txt")
 
     # Insert SQL record
     doc = Document(
@@ -108,12 +105,28 @@ def _extract_pages(filename: str, content: bytes) -> list[tuple[int, str]]:
     PDFs get real 1-indexed page numbers from pypdf.
     TXT and DOCX are treated as a single page (page 1).
     """
-    if filename.endswith(".txt"):
+    if filename.endswith(".txt") or filename.endswith(".md"):
         try:
             text = content.decode("utf-8")
         except UnicodeDecodeError:
             text = content.decode("latin-1")
         return [(1, text)]
+
+    if filename.endswith(".csv"):
+        import csv as csv_mod
+        import io
+
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError:
+            text = content.decode("latin-1")
+        reader = csv_mod.reader(io.StringIO(text))
+        rows = [
+            " | ".join(cell.strip() for cell in row)
+            for row in reader
+            if any(c.strip() for c in row)
+        ]
+        return [(1, "\n".join(rows))]
 
     if filename.endswith(".docx"):
         import io
@@ -122,27 +135,46 @@ def _extract_pages(filename: str, content: bytes) -> list[tuple[int, str]]:
 
         doc = DocxDocument(io.BytesIO(content))
         text = "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
+
+        # Extract tables
+        table_lines: list[str] = []
+        for table in doc.tables:
+            seen_rows: set[str] = set()
+            for row in table.rows:
+                row_text = " | ".join(cell.text.strip() for cell in row.cells)
+                if row_text not in seen_rows and row_text.replace("|", "").strip():
+                    seen_rows.add(row_text)
+                    table_lines.append(row_text)
+        if table_lines:
+            text = text + "\n\n" + "\n".join(table_lines)
+
         return [(1, text)]
 
     if filename.endswith(".pdf"):
-        import io
+        import fitz  # PyMuPDF
 
-        from pypdf import PdfReader
-
-        reader = PdfReader(io.BytesIO(content))
+        doc = fitz.open(stream=content, filetype="pdf")
         pages = []
-        for i, page in enumerate(reader.pages, start=1):
-            text = page.extract_text() or ""
-            if text.strip():
-                pages.append((i, text.strip()))
+        for i, page in enumerate(doc, start=1):
+            text = page.get_text().strip()
+            if not text:
+                # OCR fallback for image-only pages (requires Tesseract)
+                try:
+                    tp = page.get_textpage_ocr(language="eng", dpi=300)
+                    text = page.get_text(textpage=tp).strip()
+                except Exception:
+                    pass  # Tesseract not installed — skip this page
+            if text:
+                pages.append((i, text))
+        doc.close()
         return pages
 
     raise ValueError(f"Unsupported file type: {filename}")
 
 
 async def _generate_summary(text: str) -> str:
-    # Truncate to first 8000 chars to stay within token limits
-    snippet = text[:8000]
+    # Truncate to first 4000 chars to stay within token limits
+    snippet = text[:4000]
     if settings.AI_PROVIDER == "anthropic":
         return await _summarize_anthropic(snippet)
     return await _summarize_openai(snippet)

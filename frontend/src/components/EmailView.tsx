@@ -17,9 +17,10 @@ function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) 
   return (
     <button
       onClick={() => {
-        navigator.clipboard.writeText(text)
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
+        navigator.clipboard.writeText(text).then(() => {
+          setCopied(true)
+          setTimeout(() => setCopied(false), 2000)
+        }).catch(() => { /* clipboard unavailable */ })
       }}
       className={cn(
         'font-mono text-[10px] uppercase tracking-wider transition-colors',
@@ -45,7 +46,7 @@ function CompactDraftRow({ draft }: { draft: EmailDraft }) {
   const copyAll = () => {
     navigator.clipboard.writeText(
       `To: ${draft.to_field}\nSubject: ${draft.subject}\n\n${draft.body}`
-    )
+    ).catch(() => { /* clipboard unavailable */ })
   }
 
   return (

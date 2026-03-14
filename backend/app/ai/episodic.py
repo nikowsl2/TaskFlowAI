@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import time
+import uuid
 from functools import lru_cache
 
 from app.config import settings
 
 EPISODIC_COLLECTION = "taskflow_episodes"
 USER_MEMORIES_COLLECTION = "taskflow_user_memories"
+
+MIN_MEMORY_SCORE = 0.35  # Filter out low-relevance recall results (1 - cosine distance)
 
 
 @lru_cache(maxsize=1)
@@ -22,12 +25,16 @@ def _get_episodic_collection():
         model_name="text-embedding-3-small",
     )
     client = chromadb.PersistentClient(path=settings.CHROMA_DB_PATH)
-    return client.get_or_create_collection(EPISODIC_COLLECTION, embedding_function=ef)
+    return client.get_or_create_collection(
+        EPISODIC_COLLECTION,
+        embedding_function=ef,
+        metadata={"hnsw:space": "cosine"},
+    )
 
 
 def log_episode(project_id: int, memory_text: str) -> str:
     col = _get_episodic_collection()
-    episode_id = f"episode_{project_id}_{int(time.time() * 1000)}"
+    episode_id = f"episode_{project_id}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
     col.upsert(
         ids=[episode_id],
         documents=[memory_text],
@@ -43,10 +50,16 @@ def recall_episodes(project_id: int, query: str, n_results: int = 5) -> list[dic
             query_texts=[query],
             n_results=n_results,
             where={"project_id": project_id},
+            include=["documents", "metadatas", "distances"],
         )
         docs = results.get("documents", [[]])[0]
         metas = results.get("metadatas", [[]])[0]
-        return [{"text": d, "metadata": m} for d, m in zip(docs, metas)]
+        dists = results.get("distances", [[]])[0]
+        return [
+            {"text": d, "metadata": m}
+            for d, m, dist in zip(docs, metas, dists)
+            if (1.0 - dist) >= MIN_MEMORY_SCORE
+        ]
     except Exception:
         return []
 
@@ -105,13 +118,42 @@ def _get_user_memory_collection():
         model_name="text-embedding-3-small",
     )
     client = chromadb.PersistentClient(path=settings.CHROMA_DB_PATH)
-    return client.get_or_create_collection(USER_MEMORIES_COLLECTION, embedding_function=ef)
+    return client.get_or_create_collection(
+        USER_MEMORIES_COLLECTION,
+        embedding_function=ef,
+        metadata={"hnsw:space": "cosine"},
+    )
 
 
 def log_user_memory(memory_text: str) -> str:
-    """Log a personal user memory (anecdote, preference detail, past experience)."""
+    """Log a personal user memory (anecdote, preference detail, past experience).
+
+    Deduplicates: if a near-identical memory exists (score >= 0.85), updates it
+    instead of creating a new entry.
+    """
     col = _get_user_memory_collection()
-    memory_id = f"umem_{int(time.time() * 1000)}"
+
+    # Check for near-duplicate
+    try:
+        existing = col.query(
+            query_texts=[memory_text],
+            n_results=1,
+            include=["documents", "distances"],
+        )
+        dists = existing.get("distances", [[]])[0]
+        ids = existing.get("ids", [[]])[0]
+        if dists and (1.0 - dists[0]) >= 0.85 and ids:
+            # Update existing memory instead of creating duplicate
+            col.update(
+                ids=[ids[0]],
+                documents=[memory_text],
+                metadatas=[{"logged_at": int(time.time() * 1000)}],
+            )
+            return ids[0]
+    except Exception:
+        pass  # Fall through to create new
+
+    memory_id = f"umem_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
     col.upsert(
         ids=[memory_id],
         documents=[memory_text],
@@ -124,10 +166,19 @@ def recall_user_memories(query: str, n_results: int = 5) -> list[dict]:
     """Semantic search over personal user memories."""
     try:
         col = _get_user_memory_collection()
-        results = col.query(query_texts=[query], n_results=n_results)
+        results = col.query(
+            query_texts=[query],
+            n_results=n_results,
+            include=["documents", "metadatas", "distances"],
+        )
         docs = results.get("documents", [[]])[0]
         metas = results.get("metadatas", [[]])[0]
-        return [{"text": d, "metadata": m} for d, m in zip(docs, metas)]
+        dists = results.get("distances", [[]])[0]
+        return [
+            {"text": d, "metadata": m}
+            for d, m, dist in zip(docs, metas, dists)
+            if (1.0 - dist) >= MIN_MEMORY_SCORE
+        ]
     except Exception:
         return []
 

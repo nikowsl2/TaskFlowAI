@@ -2,12 +2,23 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 from app.config import settings
 from app.database import Base, engine
-from app.routers import chat, documents, email_drafts, events, logs, meeting, notes, profile, projects, tasks
+from app.routers import (
+    chat,
+    documents,
+    email_drafts,
+    events,
+    logs,
+    meeting,
+    notes,
+    profile,
+    projects,
+    tasks,
+)
 
 
 @asynccontextmanager
@@ -17,22 +28,22 @@ async def lifespan(app: FastAPI):
         try:
             conn.execute(text("ALTER TABLE projects ADD COLUMN last_accessed DATETIME"))
             conn.commit()
-        except Exception:
+        except OperationalError:
             pass  # column already exists
         try:
             conn.execute(text("ALTER TABLE user_profiles ADD COLUMN last_brief_date DATE"))
             conn.commit()
-        except Exception:
+        except OperationalError:
             pass
         try:
             conn.execute(text("ALTER TABLE user_profiles ADD COLUMN active_goals TEXT"))
             conn.commit()
-        except Exception:
+        except OperationalError:
             pass
         try:
             conn.execute(text("ALTER TABLE user_profiles ADD COLUMN conversation_summary TEXT"))
             conn.commit()
-        except Exception:
+        except OperationalError:
             pass
     # Create DB tables on startup
     Base.metadata.create_all(bind=engine)

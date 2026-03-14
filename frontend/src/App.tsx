@@ -25,12 +25,17 @@ function ModeToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => voi
   const [indicator, setIndicator] = useState({ left: 0, width: 0 })
 
   useLayoutEffect(() => {
-    const btn = mode === 'manual' ? manualRef.current : aiRef.current
-    if (!btn) return
-    const parent = btn.parentElement!
-    const parentRect = parent.getBoundingClientRect()
-    const btnRect = btn.getBoundingClientRect()
-    setIndicator({ left: btnRect.left - parentRect.left - 3, width: btnRect.width })
+    const update = () => {
+      const btn = mode === 'manual' ? manualRef.current : aiRef.current
+      if (!btn) return
+      const parent = btn.parentElement!
+      const parentRect = parent.getBoundingClientRect()
+      const btnRect = btn.getBoundingClientRect()
+      setIndicator({ left: btnRect.left - parentRect.left - 3, width: btnRect.width })
+    }
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
   }, [mode])
 
   return (

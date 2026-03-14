@@ -35,7 +35,9 @@ class CreateTaskInput(BaseModel):
 
 
 class ListTasksInput(BaseModel):
-    pass
+    status: Literal["all", "active", "completed"] = "active"
+    limit: int = 25
+    offset: int = 0
 
 
 class UpdateTaskInput(BaseModel):
@@ -175,10 +177,29 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "list_tasks",
             "description": (
-                "List all current tasks with their IDs, titles, priorities, completion status, "
-                "and due dates. Call this first when you need a task ID to act on."
+                "List tasks with their IDs, titles, priorities, completion status, "
+                "and due dates. Call this first when you need a task ID to act on. "
+                "Results are paginated — use offset to fetch more."
             ),
-            "parameters": {"type": "object", "properties": {}, "required": []},
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["all", "active", "completed"],
+                        "description": "Filter by status (default: active)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max tasks to return (default 25)",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Skip this many tasks for pagination (default 0)",
+                    },
+                },
+                "required": [],
+            },
         },
     },
     {
@@ -501,7 +522,14 @@ async def execute_tool(name: str, args: dict, db: Session) -> str:
 async def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
     if name == "create_task":
         inp = CreateTaskInput.model_validate(args)
-        due = _parse_date(inp.due_date)
+        try:
+            due = _parse_date(inp.due_date)
+        except _DateParseError as e:
+            return ToolResult(ok=False, message=str(e))
+        if inp.parent_id is not None:
+            parent = db.get(Task, inp.parent_id)
+            if not parent:
+                return ToolResult(ok=False, message=f"Parent task #{inp.parent_id} not found.")
         task = Task(
             title=inp.title,
             description=inp.description,
@@ -519,8 +547,14 @@ async def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
         )
 
     if name == "list_tasks":
-        ListTasksInput.model_validate(args)
-        tasks = db.query(Task).filter(Task.parent_id.is_(None)).all()
+        inp = ListTasksInput.model_validate(args)
+        query = db.query(Task).filter(Task.parent_id.is_(None))
+        if inp.status == "active":
+            query = query.filter(Task.completed.is_(False))
+        elif inp.status == "completed":
+            query = query.filter(Task.completed.is_(True))
+        total = query.count()
+        tasks = query.order_by(Task.id.asc()).offset(inp.offset).limit(inp.limit).all()
         task_list = [
             {
                 "id": t.id,
@@ -532,10 +566,17 @@ async def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
             }
             for t in tasks
         ]
+        if not tasks:
+            return ToolResult(
+                ok=True,
+                message=f"No tasks found (total: {total})",
+                data={"tasks": [], "total": total, "showing": "0-0"},
+            )
+        end = inp.offset + len(tasks)
         return ToolResult(
             ok=True,
-            message=f"Found {len(tasks)} task(s)",
-            data={"tasks": task_list},
+            message=f"Showing {inp.offset + 1}-{end} of {total} task(s)",
+            data={"tasks": task_list, "total": total, "showing": f"{inp.offset + 1}-{end}"},
         )
 
     if name == "update_task":
@@ -559,7 +600,13 @@ async def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
             updated_fields.append("completed")
         if inp.due_date is not None:
             # Empty string explicitly clears the deadline
-            task.due_date = None if inp.due_date == "" else _parse_date(inp.due_date)
+            if inp.due_date == "":
+                task.due_date = None
+            else:
+                try:
+                    task.due_date = _parse_date(inp.due_date)
+                except _DateParseError as e:
+                    return ToolResult(ok=False, message=str(e))
             updated_fields.append("due_date")
 
         db.commit()
@@ -670,7 +717,10 @@ async def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
                 "id": d.id,
                 "filename": d.filename,
                 "file_type": d.file_type,
-                "summary": d.summary,
+                "summary": (
+                    (d.summary[:150] + "...") if d.summary and len(d.summary) > 150
+                    else d.summary
+                ),
                 "char_count": d.char_count,
                 "chunk_count": d.chunk_count,
             }
@@ -790,7 +840,7 @@ async def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
         return ToolResult(
             ok=True,
             message=f"Found {len(episodes)} episode(s) for project '{project.name}'.",
-            data={"episodes": [e["text"] for e in episodes]},
+            data={"episodes": [e["text"][:300] for e in episodes]},
         )
 
     if name == "log_user_memory":
@@ -808,7 +858,7 @@ async def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
         return ToolResult(
             ok=True,
             message=f"Found {len(memories)} personal memory/memories.",
-            data={"memories": [m["text"] for m in memories]},
+            data={"memories": [m["text"][:300] for m in memories]},
         )
 
     return ToolResult(ok=False, message=f"Unknown tool: '{name}'")
@@ -817,8 +867,12 @@ async def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
+class _DateParseError(ValueError):
+    """Raised when a date string cannot be parsed."""
+
+
 def _parse_date(value: str | None) -> datetime | None:
-    """Parse an ISO date string to datetime; returns None on failure or empty input."""
+    """Parse an ISO date string to datetime; raises _DateParseError on bad input."""
     if not value:
         return None
     try:
@@ -827,6 +881,9 @@ def _parse_date(value: str | None) -> datetime | None:
         try:
             return datetime.strptime(value, "%Y-%m-%d")
         except ValueError:
-            return None
+            raise _DateParseError(
+                f"Could not parse '{value}' as a date. "
+                "Send a concrete ISO date like '2026-03-18', not relative text."
+            )
 
 

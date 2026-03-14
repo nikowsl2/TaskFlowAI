@@ -55,7 +55,8 @@ async def extract_meeting(payload: ExtractRequest):
     if not payload.content.strip():
         raise HTTPException(400, "Meeting notes content is required")
 
-    user_message = f"Today's date: {date.today().isoformat()}\n\nMeeting notes:\n{payload.content}"
+    content = payload.content[:15000]  # Cap input to ~3,750 tokens
+    user_message = f"Today's date: {date.today().isoformat()}\n\nMeeting notes:\n{content}"
 
     try:
         result = await _call_ai(user_message)
@@ -98,6 +99,9 @@ async def extract_meeting(payload: ExtractRequest):
 async def parse_file(file: UploadFile):
     filename = file.filename or ""
     content_bytes = await file.read()
+
+    if len(content_bytes) > 20 * 1024 * 1024:
+        raise HTTPException(413, "File too large. Maximum size is 20 MB.")
 
     if filename.endswith(".txt"):
         try:

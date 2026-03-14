@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useTasks, useUpdateTask } from '@/hooks/useTasks'
 import type { Task } from '@/lib/api'
@@ -354,11 +354,22 @@ export default function CalendarView({
     return d
   })
 
-  const today = useMemo(() => {
+  const [today, setToday] = useState(() => {
     const d = new Date()
     d.setHours(0, 0, 0, 0)
     return d
-  }, [])
+  })
+
+  // Refresh "today" when the date changes (app open past midnight)
+  useEffect(() => {
+    const check = () => {
+      const now = new Date()
+      now.setHours(0, 0, 0, 0)
+      if (now.getTime() !== today.getTime()) setToday(now)
+    }
+    const id = setInterval(check, 60_000)
+    return () => clearInterval(id)
+  }, [today])
 
   const navigate = (dir: -1 | 1) => {
     setCurrent((prev) => {
