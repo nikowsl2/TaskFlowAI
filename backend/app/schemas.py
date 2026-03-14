@@ -5,7 +5,6 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-
 # ── User Profile schemas ──────────────────────────────────────────────────────
 
 
@@ -100,8 +99,31 @@ TaskOut.model_rebuild()
 # ── Chat / Message schemas ────────────────────────────────────────────────────
 
 
+class ContextAttachment(BaseModel):
+    type: str
+    id: int
+    title: str | None = None
+    name: str | None = None
+    priority: str | None = None
+    completed: bool | None = None
+    due_date: str | None = None
+    description: str | None = None
+    summary: str | None = None
+    subject: str | None = None
+    to_field: str | None = None
+    body: str | None = None
+    status: str | None = None
+
+
+class FileAttachment(BaseModel):
+    name: str
+    content: str
+
+
 class ChatMessage(BaseModel):
     content: str
+    context: list[ContextAttachment] | None = None
+    files: list[FileAttachment] | None = None
 
 
 class MessageOut(BaseModel):

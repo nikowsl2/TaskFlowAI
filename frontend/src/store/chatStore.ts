@@ -1,9 +1,15 @@
 import { create } from 'zustand'
 
+export interface AttachmentLabel {
+  type: string
+  label: string
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'email_draft' | 'morning_brief'
   content: string
+  attachments?: AttachmentLabel[]
 }
 
 interface ChatState {

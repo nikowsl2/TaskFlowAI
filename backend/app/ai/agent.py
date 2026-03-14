@@ -1,117 +1,77 @@
 """Provider-switching agentic loop with SSE streaming."""
 
+import hashlib
 import json
 from collections.abc import AsyncGenerator
-from datetime import date, datetime, timezone
+from datetime import date
 
 from sqlalchemy.orm import Session
 
 from app import log_store
 from app.ai.tools import ANTHROPIC_TOOL_DEFINITIONS, TOOL_DEFINITIONS, execute_tool
 from app.config import settings
-from app.models import Project, UserProfile
+from app.models import UserProfile
 
 MAX_TOOL_ROUNDS = 20
 
+# Tools that only read data — safe to cache within a single agent invocation.
+READ_ONLY_TOOLS = frozenset({
+    "list_tasks", "list_projects", "list_documents", "search_documents",
+    "recall_project_history", "recall_user_context", "get_email_draft",
+})
+
+
+def _cache_key(tool_name: str, args: dict) -> str:
+    """Deterministic cache key from tool name + sorted args JSON."""
+    args_str = json.dumps(args, sort_keys=True, default=str)
+    return hashlib.md5(f"{tool_name}:{args_str}".encode()).hexdigest()
+
+
+def _build_invocation_hint(invocation_log: list[str]) -> str:
+    """Build a short metadata hint summarising tools called so far."""
+    if len(invocation_log) < 2:
+        return ""
+    summary = "; ".join(invocation_log)
+    return (
+        f"[Invocation context — tools called so far: {summary}. "
+        "No need to re-fetch read-only data unless you've modified it.]"
+    )
+
 SYSTEM_PROMPT_TEMPLATE = """\
 You are TaskFlow AI, a task management and scheduling assistant. \
-You help users manage their task list and calendar using the available tools.
+Today's date is {today}. Use this to resolve relative dates to ISO 8601 (YYYY-MM-DD) \
+before passing to any tool — never pass relative strings like "next Wednesday".
 
-Today's date is {today}. Use this to resolve relative dates like "next Monday" or "Thursday".
+{goals}{profile}{summary}Rules:
+1. If the user refers to a task by name, call list_tasks first to find the ID. Never invent IDs.
+2. Tool results are JSON with "ok" field — if false, tell the user what went wrong.
+3. Convert meetings/syncs/calls into tasks with due_date (no calendar tool).
+4. Call update_user_profile proactively when the user reveals role, preferences, or focus. \
+Field routing: role/team → role_and_goals; style/workflows → preferences; sprint/milestone → current_focus; misc → extra_notes.
+5. Call log_project_event after milestones, decisions, blockers, or scope changes. \
+Call list_projects first for IDs; offer to create a project if none exists.
+6. Call recall_project_history before answering questions about past project work. List projects first.
+7. AMBIGUITY: Never guess which task/project the user means with vague references. \
+Call list_tasks/list_projects, present numbered options, wait for confirmation before acting.
+8. Call log_user_memory when the user shares personal anecdotes or recurring patterns. \
+Call recall_user_context when personal history is relevant.
+9. When the user states session goals, save them via update_user_profile(field="active_goals").
+10. Morning briefs: concise and structured, no action offers, no tangents.
 
-{goals}{profile}{summary}{projects}Capabilities:
-- create_task           — add a new task with optional description, priority, and deadline
-- list_tasks            — show all tasks with IDs (call this first when you need a task ID)
-- update_task           — edit any field: rename, rewrite description, change priority, \
-set or clear a deadline, or reopen a completed task
-- delete_task           — permanently remove a task
-- complete_task         — mark a task done
-- draft_email           — compose a new email draft (saved & displayed to user for copying)
-- update_email_draft    — revise an existing draft (call get_email_draft first if unsure of content)
-- get_email_draft       — retrieve a draft's current content
-- list_documents        — show all uploaded documents with IDs and AI summaries
-- search_documents      — retrieve semantically relevant text chunks from documents
-- update_user_profile   — save durable user context (role, prefs, focus, notes, active_goals)
-- list_projects / create_project — manage project registry
-- log_project_event     — record milestones and decisions to episodic memory
-- recall_project_history — retrieve past project context via semantic search
-- log_user_memory        — save a personal memory about the user
-- recall_user_context    — retrieve relevant personal memories
-
-Rules:
-1. If the user refers to a task by name rather than ID, call list_tasks first to find the ID.
-2. Tool results are JSON objects with an "ok" field — if ok is false, tell the user what went wrong.
-3. After each action, give a short, friendly confirmation of what was done.
-4. Never invent task IDs — always retrieve them from list_tasks.
-5. DATE FORMAT (critical): Always convert relative dates to ISO 8601 (YYYY-MM-DD) before passing \
-to any tool. Never pass strings like "next Wednesday" or "Friday" — use the actual date, e.g. \
-"2026-03-18". Use today's date ({today}) as the reference to compute the exact calendar date.
-6. MEETINGS & SCHEDULED EVENTS: There is no calendar tool available. Convert any scheduled sync, \
-call, or meeting into a task with an appropriate due_date instead.
-7. MEMORY: Call update_user_profile proactively when the user reveals role, preferences, current \
-focus, or any durable personal context. Field routing: role/team → role_and_goals; \
-style/tools/workflows → preferences; active sprint/milestone → current_focus; misc → extra_notes.
-8. PROJECT EVENTS: Call log_project_event after significant milestones, decisions, deadlines, \
-blockers, or scope changes. Always call list_projects first to get project IDs. Offer to create \
-a project if none exists when the user discusses ongoing project work.
-9. PROJECT RECALL: Call recall_project_history before answering questions about past project work, \
-previous decisions, or earlier context. Always call list_projects first to get project IDs.
-10. MORNING BRIEF: When generating a morning brief, stay concise and structured. \
-Do not offer to perform actions in the brief itself — just synthesize and present. \
-Do not open tangents about emails or meeting notes.
-11. AMBIGUITY: Never guess at which task or project the user means when they use vague \
-references ("that task", "it", "the project", "him"). Call list_tasks or list_projects \
-first, then present numbered options: "Did you mean: (1) X  (2) Y?" and wait for \
-confirmation before taking any action — especially before delete, complete, or update.
-12. USER MEMORY: Call log_user_memory proactively when the user shares personal anecdotes, \
-past experiences, strong opinions, or recurring patterns too rich for profile fields. \
-Call recall_user_context before answering questions where the user's personal history \
-is relevant (e.g. "like last time", "based on how I work").
-13. ACTIVE GOALS: When the user states clear objectives, requirements, or goals for the \
-session, call update_user_profile(field="active_goals", value=...) to record them. \
-Review active_goals at the start of each response in long conversations (>20 messages) \
-to ensure you are tracking towards them.
-14. TOPIC RECOVERY: When the user returns to a topic after a digression, reference what \
-was previously established in the conversation summary or recent context without \
-asking the user to repeat themselves. Start with "Earlier we established that..." \
-if relevant.
-
-Meeting notes processing:
-When the user shares meeting notes or asks you to process notes:
-- Identify ACTION ITEMS (things someone needs to do) → create_task for each, with due_date if mentioned
-- Identify SCHEDULED EVENTS (meetings, syncs, calls) → create_task for each with due_date set to the event date
-- After processing all items, give a clear summary: list what tasks were created
-- Assign appropriate priorities (high if urgent/blocking, medium by default, low if explicitly minor)
+Action item extraction (meeting notes, email threads, any source):
+- ACTION ITEMS → create_task with due_date if mentioned (high if urgent, medium by default)
+- SCHEDULED EVENTS → create_task with due_date set to event date
+- Summarize what was created
 
 Email drafting:
-When the user asks you to write, draft, or compose an email:
-1. Call draft_email with the full To, Subject, and Body. Match the requested tone (formal/casual/urgent).
-2. Simultaneously, identify any commitments made in the email:
-   - Promised deliverables or deadlines → create_task with the due_date set
-   - Scheduled meetings/calls → create_task with due_date set to the meeting date
-3. After the draft is created, briefly confirm: the draft is ready AND list any tasks you synced.
-4. When the user asks to refine or edit the draft, call get_email_draft first, then update_email_draft \
-with the revised version. Apply changes precisely — don't rewrite parts the user didn't ask to change.
+1. Call draft_email with To, Subject, Body. Match requested tone.
+2. Create tasks for any commitments or scheduled meetings in the email.
+3. To revise: call get_email_draft first, then update_email_draft — change only what was requested.
 
 Document knowledge base:
-When the user asks about uploaded documents or their content:
-1. ALWAYS call list_documents first to discover document IDs and summaries. \
-NEVER guess or assume a document_id — IDs start at 1 and you must retrieve them.
-2. Identify the most relevant document(s) by their summary.
-3. Call search_documents with a focused query; pass the correct document_id from step 1.
-4. For cross-document questions, call search_documents multiple times across different docs.
-5. Synthesize the retrieved chunks into a clear answer. Always cite the source
-   field from each chunk (e.g. "Source: Page 4 — NVIDIAAn.pdf"). When quoting
-   directly, wrap the quote in quotation marks followed by the source.
-6. If no documents exist or no relevant chunks are found, say so honestly.
-7. For complex questions, try multiple query phrasings to improve recall.
-
-Email thread summarization:
-When the user pastes an email thread or asks you to analyze emails:
-- Identify the final decisions/outcomes and summarize them clearly
-- Extract ALL action items AND scheduled meetings/syncs assigned to the user → create_task for each; \
-set due_date in YYYY-MM-DD format for any deadline or meeting date (resolve relative dates using today)
-- Give a concise summary of what happened, then list what tasks were created
+1. ALWAYS call list_documents first — never guess document IDs.
+2. Call search_documents with focused query and correct document_id.
+3. Cite sources (e.g. "Source: Page 4 — file.pdf"). Try multiple query phrasings for complex questions.
 """
 
 
@@ -150,33 +110,72 @@ def _build_system_prompt(db: Session) -> str:
             + "\n\n"
         )
 
-    staleness_text = ""
-    try:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        projects = db.query(Project).order_by(Project.created_at.desc()).all()
-        if projects:
-            lines = []
-            for p in projects:
-                ref = p.last_accessed or p.updated_at
-                days = (now - ref).days if ref else None
-                if days is not None:
-                    note = f", last active {days} days ago"
-                    if days > 30:
-                        note += " — consider archiving"
-                else:
-                    note = ""
-                lines.append(f"- {p.name} ({p.status}{note})")
-            staleness_text = "Projects:\n" + "\n".join(lines) + "\n\n"
-    except Exception:
-        staleness_text = ""
-
     return SYSTEM_PROMPT_TEMPLATE.format(
         today=date.today().isoformat(),
         goals=goals_text,
         profile=profile_text,
         summary=summary_text,
-        projects=staleness_text,
     )
+
+
+async def _execute_tools_batch(
+    tool_calls: list[dict],
+    db: Session,
+    tool_cache: dict[str, str],
+    invocation_log: list[str],
+) -> AsyncGenerator[dict, None]:
+    """Execute tool calls with caching, logging, and SSE emission. Yields chunks.
+
+    Each item in tool_calls must have: {"name": str, "args": dict, "id": str}.
+    After execution, each item gets a "result" key with the raw JSON string.
+    """
+    for tc in tool_calls:
+        fn_name, fn_args = tc["name"], tc["args"]
+        yield {"type": "status", "content": _status_label(fn_name)}
+
+        ckey = _cache_key(fn_name, fn_args)
+        cached = fn_name in READ_ONLY_TOOLS and ckey in tool_cache
+
+        if cached:
+            result = tool_cache[ckey]
+            log_store.log(
+                log_store.TOOL_CALL,
+                {"name": fn_name, "args": fn_args, "cached": True},
+            )
+        else:
+            log_store.log(log_store.TOOL_CALL, {"name": fn_name, "args": fn_args})
+            result = await execute_tool(fn_name, fn_args, db)
+            if fn_name in READ_ONLY_TOOLS:
+                tool_cache[ckey] = result
+            else:
+                tool_cache.clear()
+
+        try:
+            result_obj = json.loads(result)
+            log_store.log(
+                log_store.TOOL_RESULT,
+                {"name": fn_name, "ok": result_obj.get("ok"), "message": result_obj.get("message"), "data": result_obj.get("data")},
+                level="ERROR" if not result_obj.get("ok") else "INFO",
+            )
+            email_tools = ("draft_email", "update_email_draft", "get_email_draft")
+            if fn_name in email_tools and result_obj.get("ok") and result_obj.get("data"):
+                # Send full draft to frontend via SSE (only for write operations)
+                if fn_name in ("draft_email", "update_email_draft"):
+                    yield {"type": "email_draft", "data": result_obj["data"]}
+                # Truncate body in result sent to LLM to save tokens
+                data = result_obj["data"]
+                if "body" in data and len(data["body"]) > 200:
+                    result_obj["data"]["body_preview"] = data["body"][:200] + "..."
+                    del result_obj["data"]["body"]
+                    result = json.dumps(result_obj)
+            short_msg = result_obj.get("message", "")[:80]
+            status = "ok" if result_obj.get("ok") else "error"
+            tag = " (cached)" if cached else ""
+            invocation_log.append(f"{fn_name}{tag} -> {status}: {short_msg}")
+        except json.JSONDecodeError:
+            invocation_log.append(f"{fn_name} -> done")
+
+        tc["result"] = result
 
 
 async def run_agent(
@@ -202,6 +201,8 @@ async def _openai_loop(
     system_prompt = _build_system_prompt(db)
     msgs = [{"role": "system", "content": system_prompt}] + list(messages)
     tool_call_count = 0
+    tool_cache: dict[str, str] = {}
+    invocation_log: list[str] = []
 
     log_store.log(log_store.AGENT_START, {"provider": "openai", "model": settings.AI_MODEL})
 
@@ -219,7 +220,6 @@ async def _openai_loop(
                 stream=True,
             )
 
-            collected_chunks: list = []
             collected_text = ""
             tool_calls_raw: dict[int, dict] = {}
 
@@ -248,8 +248,6 @@ async def _openai_loop(
                         if tc.function.arguments:
                             tool_calls_raw[idx]["function"]["arguments"] += tc.function.arguments
 
-                collected_chunks.append(chunk)
-
             if not tool_calls_raw:
                 log_store.log(log_store.AGENT_DONE, {"tool_calls": tool_call_count, "response_len": len(collected_text)})
                 yield {"type": "done"}
@@ -261,31 +259,25 @@ async def _openai_loop(
                 assistant_msg["content"] = collected_text
             msgs.append(assistant_msg)
 
+            # Normalize to shared format for _execute_tools_batch
+            batch = []
             for tc in tool_calls_list:
-                fn_name = tc["function"]["name"]
-                yield {"type": "status", "content": _status_label(fn_name)}
                 try:
                     fn_args = json.loads(tc["function"]["arguments"])
                 except json.JSONDecodeError:
                     fn_args = {}
+                batch.append({"name": tc["function"]["name"], "args": fn_args, "id": tc["id"]})
 
-                log_store.log(log_store.TOOL_CALL, {"name": fn_name, "args": fn_args})
-                result = await execute_tool(fn_name, fn_args, db)
-                tool_call_count += 1
+            async for chunk in _execute_tools_batch(batch, db, tool_cache, invocation_log):
+                yield chunk
+            tool_call_count += len(batch)
 
-                try:
-                    result_obj = json.loads(result)
-                    log_store.log(
-                        log_store.TOOL_RESULT,
-                        {"name": fn_name, "ok": result_obj.get("ok"), "message": result_obj.get("message"), "data": result_obj.get("data")},
-                        level="ERROR" if not result_obj.get("ok") else "INFO",
-                    )
-                    if fn_name in ("draft_email", "update_email_draft") and result_obj.get("ok") and result_obj.get("data"):
-                        yield {"type": "email_draft", "data": result_obj["data"]}
-                except json.JSONDecodeError:
-                    pass
+            for item in batch:
+                msgs.append({"role": "tool", "tool_call_id": item["id"], "content": item["result"]})
 
-                msgs.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+            hint = _build_invocation_hint(invocation_log)
+            if hint:
+                msgs.append({"role": "system", "content": hint})
 
     except Exception as e:
         log_store.log(log_store.AGENT_ERROR, {"error": str(e)}, level="ERROR")
@@ -304,6 +296,8 @@ async def _anthropic_loop(
     system_prompt = _build_system_prompt(db)
     anthropic_msgs = [m for m in messages if m["role"] != "system"]
     tool_call_count = 0
+    tool_cache: dict[str, str] = {}
+    invocation_log: list[str] = []
 
     log_store.log(log_store.AGENT_START, {"provider": "anthropic", "model": settings.AI_MODEL})
 
@@ -369,26 +363,21 @@ async def _anthropic_loop(
                 )
             anthropic_msgs.append({"role": "assistant", "content": content_blocks})
 
-            tool_results = []
-            for tu in tool_uses:
-                yield {"type": "status", "content": _status_label(tu["name"])}
-                log_store.log(log_store.TOOL_CALL, {"name": tu["name"], "args": tu["input"]})
-                result = await execute_tool(tu["name"], tu["input"], db)
-                tool_call_count += 1
+            # Normalize to shared format for _execute_tools_batch
+            batch = [{"name": tu["name"], "args": tu["input"], "id": tu["id"]} for tu in tool_uses]
 
-                try:
-                    result_obj = json.loads(result)
-                    log_store.log(
-                        log_store.TOOL_RESULT,
-                        {"name": tu["name"], "ok": result_obj.get("ok"), "message": result_obj.get("message"), "data": result_obj.get("data")},
-                        level="ERROR" if not result_obj.get("ok") else "INFO",
-                    )
-                    if tu["name"] in ("draft_email", "update_email_draft") and result_obj.get("ok") and result_obj.get("data"):
-                        yield {"type": "email_draft", "data": result_obj["data"]}
-                except json.JSONDecodeError:
-                    pass
+            async for chunk in _execute_tools_batch(batch, db, tool_cache, invocation_log):
+                yield chunk
+            tool_call_count += len(batch)
 
-                tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": result})
+            tool_results = [
+                {"type": "tool_result", "tool_use_id": item["id"], "content": item["result"]}
+                for item in batch
+            ]
+
+            hint = _build_invocation_hint(invocation_log)
+            if hint:
+                tool_results.append({"type": "text", "text": hint})
             anthropic_msgs.append({"role": "user", "content": tool_results})
 
     except Exception as e:
