@@ -10,7 +10,7 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 @router.get("/", response_model=list[TaskOut])
 def list_tasks(db: Session = Depends(get_db)):
-    return db.query(Task).filter(Task.parent_id.is_(None)).all()
+    return db.query(Task).all()
 
 
 @router.post("/", response_model=TaskOut, status_code=201)

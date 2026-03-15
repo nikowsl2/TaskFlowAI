@@ -1,7 +1,8 @@
-from datetime import datetime, timezone, date as date_type
+from datetime import date as date_type
+from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Boolean, Date, DateTime, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
 
@@ -15,21 +16,9 @@ class Task(Base):
     completed: Mapped[bool] = mapped_column(Boolean, default=False)
     priority: Mapped[str] = mapped_column(String(10), default="medium")  # low | medium | high
     due_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    parent_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True
-    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
-    )
-
-    subtasks: Mapped[list["Task"]] = relationship(
-        "Task",
-        back_populates="parent",
-        cascade="all, delete-orphan",
-    )
-    parent: Mapped["Task | None"] = relationship(
-        "Task", back_populates="subtasks", remote_side=[id]
     )
 
 

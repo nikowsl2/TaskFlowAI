@@ -254,15 +254,6 @@ function MenuTaskItem({ task, expandedId, onExpand }: {
             />
           </div>
 
-          {/* Subtasks */}
-          {task.subtasks?.length > 0 && (
-            <div className="mb-2.5 space-y-1 border-l-2 border-border/40 pl-3">
-              {task.subtasks.map((sub) => (
-                <SubtaskRow key={sub.id} task={sub} />
-              ))}
-            </div>
-          )}
-
           {/* Delete */}
           <button
             onClick={() => {
@@ -279,28 +270,6 @@ function MenuTaskItem({ task, expandedId, onExpand }: {
   )
 }
 
-function SubtaskRow({ task }: { task: Task }) {
-  const updateTask = useUpdateTask()
-  return (
-    <div className="flex items-center gap-2">
-      <button
-        onClick={() => updateTask.mutate({ id: task.id, data: { completed: !task.completed } })}
-        className={cn(
-          'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-all',
-          task.completed ? 'border-primary/50 bg-primary/15 text-primary' : 'border-border text-transparent hover:border-primary/50'
-        )}
-      >
-        <svg width="7" height="7" viewBox="0 0 7 7" fill="none">
-          <path d="M1 3.5l1.5 1.5 3.5-3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-      <span className={cn('text-xs', task.completed && 'text-muted-foreground line-through')}>
-        {task.title}
-      </span>
-    </div>
-  )
-}
-
 // ── Manual mode: full task card ───────────────────────────────────────────────
 
 function TaskCard({ task, highlighted }: { task: Task; highlighted?: boolean }) {
@@ -308,11 +277,38 @@ function TaskCard({ task, highlighted }: { task: Task; highlighted?: boolean }) 
   const deleteTask = useDeleteTask()
   const ref = useRef<HTMLDivElement>(null)
 
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [editingDesc, setEditingDesc] = useState(false)
+  const [titleVal, setTitleVal] = useState(task.title)
+  const [descVal, setDescVal] = useState(task.description ?? '')
+
+  // Sync with external updates (e.g. from AI agent)
+  useEffect(() => { setTitleVal(task.title) }, [task.title])
+  useEffect(() => { setDescVal(task.description ?? '') }, [task.description])
+
   useEffect(() => {
     if (highlighted && ref.current) {
       ref.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
   }, [highlighted])
+
+  const saveTitle = () => {
+    setEditingTitle(false)
+    const trimmed = titleVal.trim()
+    if (trimmed && trimmed !== task.title) {
+      updateTask.mutate({ id: task.id, data: { title: trimmed } })
+    } else {
+      setTitleVal(task.title)
+    }
+  }
+
+  const saveDesc = () => {
+    setEditingDesc(false)
+    const trimmed = descVal.trim()
+    if (trimmed !== (task.description ?? '')) {
+      updateTask.mutate({ id: task.id, data: { description: trimmed || undefined } })
+    }
+  }
 
   return (
     <div
@@ -342,28 +338,101 @@ function TaskCard({ task, highlighted }: { task: Task; highlighted?: boolean }) 
         </button>
 
         <div className="min-w-0 flex-1">
-          <p className={cn('text-sm font-semibold leading-snug', task.completed && 'line-through text-muted-foreground')}>
-            {task.title}
-          </p>
-          {task.description && (
-            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{task.description}</p>
-          )}
-          {task.due_date && (
-            <p className="mt-1.5 font-mono text-[10px] text-primary/60">
-              DUE {new Date(task.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+          {/* Title — click to edit */}
+          {editingTitle ? (
+            <input
+              autoFocus
+              value={titleVal}
+              onChange={(e) => setTitleVal(e.target.value)}
+              onBlur={saveTitle}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') saveTitle()
+                if (e.key === 'Escape') { setTitleVal(task.title); setEditingTitle(false) }
+              }}
+              className="w-full bg-transparent text-sm font-semibold leading-snug outline-none ring-1 ring-primary/40 rounded px-1 -ml-1"
+            />
+          ) : (
+            <p
+              onClick={() => !task.completed && setEditingTitle(true)}
+              className={cn(
+                'text-sm font-semibold leading-snug',
+                task.completed ? 'line-through text-muted-foreground' : 'cursor-text hover:text-primary transition-colors'
+              )}
+            >
+              {task.title}
             </p>
           )}
-          {task.subtasks?.length > 0 && (
-            <div className="mt-2 space-y-1 border-l-2 border-border/40 pl-3">
-              {task.subtasks.map((sub) => (
-                <SubtaskRow key={sub.id} task={sub} />
+
+          {/* Description — click to edit (or click to add) */}
+          {editingDesc ? (
+            <textarea
+              autoFocus
+              value={descVal}
+              onChange={(e) => setDescVal(e.target.value)}
+              onBlur={saveDesc}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') { setDescVal(task.description ?? ''); setEditingDesc(false) }
+              }}
+              rows={2}
+              className="mt-1 w-full resize-none bg-transparent text-xs leading-relaxed text-muted-foreground outline-none ring-1 ring-primary/40 rounded px-1 -ml-1"
+            />
+          ) : (
+            <p
+              onClick={() => !task.completed && setEditingDesc(true)}
+              className={cn(
+                'mt-0.5 text-xs leading-relaxed',
+                task.description
+                  ? 'text-muted-foreground'
+                  : 'text-muted-foreground/30 italic',
+                !task.completed && 'cursor-text hover:text-muted-foreground/80 transition-colors'
+              )}
+            >
+              {task.description || (task.completed ? '' : 'Add description…')}
+            </p>
+          )}
+
+          {/* Due date + Priority controls — visible on hover */}
+          <div className="mt-2 flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
+            {/* Priority buttons */}
+            <div className="flex items-center gap-1">
+              {(['low', 'medium', 'high'] as const).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => updateTask.mutate({ id: task.id, data: { priority: p } })}
+                  className={cn(
+                    'rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider transition-all',
+                    task.priority === p
+                      ? 'bg-primary/20 text-primary'
+                      : 'text-muted-foreground/30 hover:text-muted-foreground'
+                  )}
+                >
+                  {p}
+                </button>
               ))}
             </div>
+
+            {/* Due date picker */}
+            <input
+              type="date"
+              value={task.due_date ? task.due_date.split('T')[0] : ''}
+              onChange={(e) => {
+                const val = e.target.value
+                updateTask.mutate({ id: task.id, data: { due_date: val ? `${val}T00:00:00` : null } })
+              }}
+              className="rounded border border-border/60 bg-transparent px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground outline-none [color-scheme:dark]"
+            />
+          </div>
+
+          {/* Due date display — always visible when set (hidden on hover when controls show) */}
+          {task.due_date && (
+            <p className="mt-1.5 font-mono text-[10px] text-primary/60 group-hover:hidden">
+              DUE {new Date(task.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            </p>
           )}
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <span className="font-mono text-[10px] font-bold tracking-wider text-muted-foreground/50 uppercase">
+          <span className="font-mono text-[10px] font-bold tracking-wider text-muted-foreground/50 uppercase group-hover:hidden">
             {task.priority[0]}
           </span>
           <button

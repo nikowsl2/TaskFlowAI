@@ -45,6 +45,33 @@ async def lifespan(app: FastAPI):
             conn.commit()
         except OperationalError:
             pass
+        # Drop parent_id column from tasks table (SQLite table rebuild)
+        try:
+            result = conn.execute(text("PRAGMA table_info(tasks)"))
+            columns = [row[1] for row in result]
+            if "parent_id" in columns:
+                conn.execute(text("""
+                    CREATE TABLE tasks_new (
+                        id INTEGER PRIMARY KEY,
+                        title VARCHAR(255) NOT NULL,
+                        description TEXT,
+                        completed BOOLEAN DEFAULT 0,
+                        priority VARCHAR(10) DEFAULT 'medium',
+                        due_date DATETIME,
+                        created_at DATETIME,
+                        updated_at DATETIME
+                    )
+                """))
+                conn.execute(text("""
+                    INSERT INTO tasks_new (id, title, description, completed, priority, due_date, created_at, updated_at)
+                    SELECT id, title, description, completed, priority, due_date, created_at, updated_at
+                    FROM tasks
+                """))
+                conn.execute(text("DROP TABLE tasks"))
+                conn.execute(text("ALTER TABLE tasks_new RENAME TO tasks"))
+                conn.commit()
+        except OperationalError:
+            pass
     # Create DB tables on startup
     Base.metadata.create_all(bind=engine)
     yield

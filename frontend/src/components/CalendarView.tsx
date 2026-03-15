@@ -37,10 +37,6 @@ function addDays(d: Date, n: number): Date {
   return r
 }
 
-function flattenTasks(tasks: Task[]): Task[] {
-  return tasks.flatMap((t) => [t, ...flattenTasks(t.subtasks ?? [])])
-}
-
 function tasksOnDay(tasks: Task[], day: Date): Task[] {
   return tasks.filter((t) => t.due_date && isSameDay(parseTaskDate(t.due_date), day))
 }
@@ -311,9 +307,6 @@ function DayView({
                   {t.description && (
                     <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{t.description}</p>
                   )}
-                  {t.parent_id && (
-                    <p className="mt-1 font-mono text-[9px] text-muted-foreground/40">subtask</p>
-                  )}
                 </div>
 
                 <div
@@ -341,8 +334,7 @@ export default function CalendarView({
   onTaskClick?: (taskId: number) => void
 }) {
   const { data: tasks = [] } = useTasks()
-  const allTasks = useMemo(() => flattenTasks(tasks), [tasks])
-  const tasksWithDeadline = useMemo(() => allTasks.filter((t) => t.due_date), [allTasks])
+  const tasksWithDeadline = useMemo(() => tasks.filter((t) => t.due_date), [tasks])
   const handleTaskClick = useCallback((taskId: number) => {
     onTaskClick?.(taskId)
   }, [onTaskClick])
@@ -397,7 +389,7 @@ export default function CalendarView({
     return `${MONTH_NAMES[current.getMonth()]} ${current.getFullYear()}`
   })()
 
-  const noDeadlineCount = allTasks.filter((t) => !t.due_date && !t.completed).length
+  const noDeadlineCount = tasks.filter((t) => !t.due_date && !t.completed).length
 
   return (
     <div className="flex h-full flex-col">

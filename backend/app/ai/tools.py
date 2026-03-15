@@ -31,7 +31,6 @@ class CreateTaskInput(BaseModel):
     description: str | None = None
     priority: Priority = "medium"
     due_date: str | None = None  # ISO 8601, e.g. "2025-06-01"
-    parent_id: int | None = None
 
 
 class ListTasksInput(BaseModel):
@@ -163,10 +162,6 @@ TOOL_DEFINITIONS = [
                             "before calling this tool. Never pass relative date strings."
                         ),
                     },
-                    "parent_id": {
-                        "type": "integer",
-                        "description": "ID of parent task if this is a subtask",
-                    },
                 },
                 "required": ["title"],
             },
@@ -246,7 +241,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "delete_task",
-            "description": "Permanently delete a task and all its subtasks.",
+            "description": "Permanently delete a task.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -526,16 +521,11 @@ async def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
             due = _parse_date(inp.due_date)
         except _DateParseError as e:
             return ToolResult(ok=False, message=str(e))
-        if inp.parent_id is not None:
-            parent = db.get(Task, inp.parent_id)
-            if not parent:
-                return ToolResult(ok=False, message=f"Parent task #{inp.parent_id} not found.")
         task = Task(
             title=inp.title,
             description=inp.description,
             priority=inp.priority,
             due_date=due,
-            parent_id=inp.parent_id,
         )
         db.add(task)
         db.commit()
@@ -548,7 +538,7 @@ async def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
 
     if name == "list_tasks":
         inp = ListTasksInput.model_validate(args)
-        query = db.query(Task).filter(Task.parent_id.is_(None))
+        query = db.query(Task)
         if inp.status == "active":
             query = query.filter(Task.completed.is_(False))
         elif inp.status == "completed":
@@ -562,7 +552,6 @@ async def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
                 "priority": t.priority,
                 "completed": t.completed,
                 "due_date": t.due_date.date().isoformat() if t.due_date else None,
-                "subtask_count": len(t.subtasks),
             }
             for t in tasks
         ]

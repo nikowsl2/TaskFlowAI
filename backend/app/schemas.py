@@ -67,7 +67,6 @@ class TaskCreate(BaseModel):
     description: str | None = None
     priority: Priority = "medium"
     due_date: datetime | None = None
-    parent_id: int | None = None
 
 
 class TaskUpdate(BaseModel):
@@ -85,15 +84,10 @@ class TaskOut(BaseModel):
     completed: bool
     priority: Priority
     due_date: datetime | None
-    parent_id: int | None
     created_at: datetime
     updated_at: datetime
-    subtasks: list[TaskOut] = []
 
     model_config = {"from_attributes": True}
-
-
-TaskOut.model_rebuild()
 
 
 # ── Chat / Message schemas ────────────────────────────────────────────────────

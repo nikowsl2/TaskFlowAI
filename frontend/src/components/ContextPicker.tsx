@@ -99,7 +99,7 @@ function EmptyState({ label }: { label: string }) {
 
 function TasksList({ toggle, isAttached }: ListProps) {
   const { data: tasks, isLoading } = useTasks()
-  const topLevel = tasks?.filter((t) => !t.parent_id) ?? []
+  const topLevel = tasks ?? []
   if (isLoading) return <p className="py-4 text-center text-[11px] text-muted-foreground/40">Loading...</p>
   if (!topLevel.length) return <EmptyState label="tasks" />
   return (

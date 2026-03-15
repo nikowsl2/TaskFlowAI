@@ -10,7 +10,7 @@ An AI-powered task management workspace with natural language chat, meeting note
 
 ### Task Management
 - Create, edit, complete, and delete tasks with priority levels (low / medium / high) and optional deadlines
-- Subtask hierarchy with parent-child relationships
+- Inline editing — click any task field to edit title, description, priority, or deadline
 - Calendar view with day/week/month navigation and overdue highlighting
 
 ### AI Agent
@@ -228,7 +228,7 @@ The agent has access to 17 tools:
 
 | Tool | Description |
 |------|-------------|
-| `create_task` | Create a task with title, priority, due date, and optional parent |
+| `create_task` | Create a task with title, priority, and due date |
 | `list_tasks` | List active or completed tasks with pagination |
 | `update_task` | Update any task field |
 | `delete_task` | Delete a task by ID |
