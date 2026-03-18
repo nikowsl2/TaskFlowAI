@@ -122,11 +122,18 @@ def _extract_pages(filename: str, content: bytes) -> list[tuple[int, str]]:
             text = content.decode("latin-1")
         reader = csv_mod.reader(io.StringIO(text))
         rows = [
-            " | ".join(cell.strip() for cell in row)
+            "| " + " | ".join(cell.strip() for cell in row) + " |"
             for row in reader
             if any(c.strip() for c in row)
         ]
-        return [(1, "\n".join(rows))]
+        if rows:
+            # Insert separator after header row
+            header = rows[0]
+            col_count = header.count("|") - 1
+            separator = "| " + " | ".join(["---"] * col_count) + " |"
+            rows.insert(1, separator)
+        table_text = "<!-- TABLE -->\n" + "\n".join(rows) + "\n<!-- /TABLE -->"
+        return [(1, table_text)]
 
     if filename.endswith(".docx"):
         import io
@@ -136,17 +143,28 @@ def _extract_pages(filename: str, content: bytes) -> list[tuple[int, str]]:
         doc = DocxDocument(io.BytesIO(content))
         text = "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
-        # Extract tables
-        table_lines: list[str] = []
+        # Extract tables as markdown with markers
+        table_blocks: list[str] = []
         for table in doc.tables:
             seen_rows: set[str] = set()
+            md_rows: list[str] = []
             for row in table.rows:
-                row_text = " | ".join(cell.text.strip() for cell in row.cells)
-                if row_text not in seen_rows and row_text.replace("|", "").strip():
-                    seen_rows.add(row_text)
-                    table_lines.append(row_text)
-        if table_lines:
-            text = text + "\n\n" + "\n".join(table_lines)
+                cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
+                row_text = "| " + " | ".join(cells) + " |"
+                key = " | ".join(cells)
+                if key not in seen_rows and key.replace("|", "").strip():
+                    seen_rows.add(key)
+                    md_rows.append(row_text)
+            if md_rows:
+                # Insert separator after header row
+                col_count = len(table.rows[0].cells) if table.rows else 1
+                separator = "| " + " | ".join(["---"] * col_count) + " |"
+                md_rows.insert(1, separator)
+                table_blocks.append(
+                    "<!-- TABLE -->\n" + "\n".join(md_rows) + "\n<!-- /TABLE -->"
+                )
+        if table_blocks:
+            text = text + "\n\n" + "\n\n".join(table_blocks)
 
         return [(1, text)]
 
@@ -156,7 +174,7 @@ def _extract_pages(filename: str, content: bytes) -> list[tuple[int, str]]:
         doc = fitz.open(stream=content, filetype="pdf")
         pages = []
         for i, page in enumerate(doc, start=1):
-            text = page.get_text().strip()
+            text = _extract_pdf_page(page)
             if not text:
                 # OCR fallback for image-only pages (requires Tesseract)
                 try:
@@ -170,6 +188,108 @@ def _extract_pages(filename: str, content: bytes) -> list[tuple[int, str]]:
         return pages
 
     raise ValueError(f"Unsupported file type: {filename}")
+
+
+def _extract_pdf_page(page) -> str:  # noqa: ANN001
+    """Layout-aware PDF page extraction with table and heading detection.
+
+    Uses PyMuPDF's find_tables() for tables and get_text("dict") for
+    heading detection. Falls back to plain get_text() on any error.
+    """
+    try:
+        return _extract_pdf_page_inner(page)
+    except Exception:
+        return page.get_text().strip()
+
+
+def _extract_pdf_page_inner(page) -> str:  # noqa: ANN001
+    """Inner implementation — may raise; caller handles fallback."""
+    import statistics
+
+    # 1. Detect tables and format as markdown
+    table_blocks: list[tuple[float, str]] = []  # (y_position, markdown)
+    table_rects: list[tuple[float, float, float, float]] = []
+
+    tables = page.find_tables()
+    for table in tables:
+        bbox = table.bbox  # (x0, y0, x1, y1)
+        table_rects.append(bbox)
+        rows = table.extract()
+        if not rows:
+            continue
+        # Filter out fully-empty rows
+        rows = [r for r in rows if any((c or "").strip() for c in r)]
+        if not rows:
+            continue
+        # Build markdown table
+        md_rows = []
+        for row in rows:
+            cells = [(c or "").strip().replace("\n", " ") for c in row]
+            md_rows.append("| " + " | ".join(cells) + " |")
+        # Insert separator after header
+        col_count = len(rows[0])
+        separator = "| " + " | ".join(["---"] * col_count) + " |"
+        md_rows.insert(1, separator)
+        block_text = "<!-- TABLE -->\n" + "\n".join(md_rows) + "\n<!-- /TABLE -->"
+        table_blocks.append((bbox[1], block_text))  # sort by y0
+
+    # 2. Extract non-table text with heading detection
+    def _overlaps_table(block_rect: tuple) -> bool:
+        bx0, by0, bx1, by1 = block_rect[:4]
+        for tx0, ty0, tx1, ty1 in table_rects:
+            # Check for overlap (not just containment)
+            if bx0 < tx1 and bx1 > tx0 and by0 < ty1 and by1 > ty0:
+                return True
+        return False
+
+    page_dict = page.get_text("dict")
+    blocks = page_dict.get("blocks", [])
+
+    # Collect all font sizes to find median
+    all_sizes: list[float] = []
+    for block in blocks:
+        if block.get("type") != 0:  # text blocks only
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                if span.get("text", "").strip():
+                    all_sizes.append(span["size"])
+
+    median_size = statistics.median(all_sizes) if all_sizes else 12.0
+    heading_threshold = median_size * 1.3
+
+    text_blocks: list[tuple[float, str]] = []  # (y_position, text)
+    for block in blocks:
+        if block.get("type") != 0:
+            continue
+        bbox = block.get("bbox", (0, 0, 0, 0))
+        if _overlaps_table(bbox):
+            continue
+
+        lines: list[str] = []
+        for line in block.get("lines", []):
+            spans_text = []
+            is_heading = False
+            for span in line.get("spans", []):
+                text = span.get("text", "")
+                if text.strip():
+                    spans_text.append(text)
+                    if span["size"] >= heading_threshold:
+                        is_heading = True
+            line_text = "".join(spans_text).strip()
+            if line_text:
+                if is_heading:
+                    line_text = "<!-- HEADING -->" + line_text
+                lines.append(line_text)
+
+        if lines:
+            text_blocks.append((bbox[1], "\n".join(lines)))
+
+    # 3. Merge all blocks in reading order (by vertical position)
+    all_blocks = table_blocks + text_blocks
+    all_blocks.sort(key=lambda b: b[0])
+
+    return "\n\n".join(text for _, text in all_blocks).strip()
 
 
 async def _generate_summary(text: str) -> str:

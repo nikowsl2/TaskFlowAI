@@ -758,7 +758,9 @@ async def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
             filename = docs_by_id.get(r.get("document_id"), "unknown")
             r["filename"] = filename
             page_num = r.pop("page_num", None)
-            r["source"] = f"Page {page_num} — {filename}" if page_num else filename
+            chunk_type = r.pop("chunk_type", "text")
+            type_label = " [Table]" if chunk_type == "table" else ""
+            r["source"] = f"Page {page_num}{type_label} — {filename}" if page_num else filename
 
         return ToolResult(
             ok=True,

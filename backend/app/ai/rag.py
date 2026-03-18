@@ -166,13 +166,235 @@ def _get_collection():
     )
 
 
+def _split_segments(text: str) -> list[dict]:
+    """Parse marked-up page text into typed segments.
+
+    Recognizes <!-- TABLE --> and <!-- HEADING --> markers from enriched extraction.
+    Unmarked text (e.g. plain TXT/MD files) produces a single "text" segment.
+    """
+    import re
+
+    TABLE_START = "<!-- TABLE -->"
+    TABLE_END = "<!-- /TABLE -->"
+    HEADING_MARKER = "<!-- HEADING -->"
+
+    segments: list[dict] = []
+
+    # Split on table markers first
+    parts = re.split(r"(<!-- TABLE -->.*?<!-- /TABLE -->)", text, flags=re.DOTALL)
+
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+
+        if part.startswith(TABLE_START) and part.endswith(TABLE_END):
+            # Strip the markers from the content
+            inner = part[len(TABLE_START) : -len(TABLE_END)].strip()
+            segments.append({"text": inner, "type": "table"})
+        elif HEADING_MARKER in part:
+            # Split on heading markers to create heading_section segments
+            heading_parts = re.split(r"(?=<!-- HEADING -->)", part)
+            for hp in heading_parts:
+                hp = hp.strip()
+                if not hp:
+                    continue
+                if hp.startswith(HEADING_MARKER):
+                    # Remove the marker from the text content
+                    hp = hp.replace(HEADING_MARKER, "", 1)
+                    segments.append({"text": hp.strip(), "type": "heading_section"})
+                else:
+                    segments.append({"text": hp, "type": "text"})
+        else:
+            segments.append({"text": part, "type": "text"})
+
+    return segments
+
+
+def _chunk_table(text: str, max_size: int = 1600) -> list[dict]:
+    """Chunk a table segment. Keep atomic if under max_size, else split by rows."""
+    if len(text) <= max_size:
+        return [{"text": text, "chunk_type": "table"}]
+
+    lines = text.split("\n")
+    # First two lines are header + separator
+    header_lines = lines[:2] if len(lines) >= 2 else lines[:1]
+    header = "\n".join(header_lines)
+    data_rows = lines[2:] if len(lines) >= 2 else []
+
+    if not data_rows:
+        return [{"text": text, "chunk_type": "table"}]
+
+    chunks: list[dict] = []
+    current_rows: list[str] = []
+    current_size = len(header) + 1  # +1 for newline
+
+    for row in data_rows:
+        row_size = len(row) + 1
+        if current_size + row_size > max_size and current_rows:
+            chunk_text = header + "\n" + "\n".join(current_rows)
+            chunks.append({"text": chunk_text, "chunk_type": "table"})
+            current_rows = []
+            current_size = len(header) + 1
+        current_rows.append(row)
+        current_size += row_size
+
+    if current_rows:
+        chunk_text = header + "\n" + "\n".join(current_rows)
+        chunks.append({"text": chunk_text, "chunk_type": "table"})
+
+    return chunks
+
+
+def _chunk_heading_section(text: str, target: int = 800, overlap: int = 150) -> list[dict]:
+    """Chunk a heading section, keeping heading attached to first paragraph."""
+    if len(text) <= target:
+        return [{"text": text, "chunk_type": "text"}]
+
+    # Split into heading line and body
+    lines = text.split("\n", 1)
+    heading_line = lines[0]
+    body = lines[1].strip() if len(lines) > 1 else ""
+
+    if not body:
+        return [{"text": text, "chunk_type": "text"}]
+
+    # First chunk: heading + as much body as fits
+    first_budget = target - len(heading_line) - 2  # -2 for \n\n
+    if first_budget <= 0:
+        first_budget = target
+
+    chunks: list[dict] = []
+    paragraphs = [p.strip() for p in body.split("\n\n") if p.strip()]
+
+    # Build first chunk with heading attached
+    first_parts = [heading_line]
+    used = len(heading_line)
+    para_idx = 0
+
+    while para_idx < len(paragraphs):
+        para = paragraphs[para_idx]
+        if used + len(para) + 2 > target and para_idx > 0:
+            break
+        first_parts.append(para)
+        used += len(para) + 2
+        para_idx += 1
+        if used >= target:
+            break
+
+    chunks.append({"text": "\n\n".join(first_parts).strip(), "chunk_type": "text"})
+
+    # Remaining paragraphs: chunk with overlap
+    if para_idx < len(paragraphs):
+        remaining = "\n\n".join(paragraphs[para_idx:])
+        remaining_chunks = _chunk_text(remaining, target, overlap)
+        # Add overlap from end of first chunk to start of second
+        if remaining_chunks and chunks:
+            first_text = chunks[-1]["text"]
+            overlap_text = first_text[-overlap:].strip()
+            if overlap_text:
+                remaining_chunks[0]["text"] = overlap_text + "\n\n" + remaining_chunks[0]["text"]
+        chunks.extend(remaining_chunks)
+
+    return chunks
+
+
+def _chunk_text(text: str, target: int = 800, overlap: int = 150) -> list[dict]:
+    """Fixed-size text chunking with universal overlap between ALL consecutive chunks."""
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    if not paragraphs:
+        return []
+
+    chunks: list[dict] = []
+    current = ""
+    prev_tail = ""  # last `overlap` chars of previous chunk for overlap
+
+    for para in paragraphs:
+        if len(para) > target:
+            # Flush current buffer
+            if current:
+                chunks.append({"text": current.strip(), "chunk_type": "text"})
+                prev_tail = current.strip()[-overlap:]
+                current = ""
+            # Hard-split long paragraph
+            start = 0
+            # Prepend overlap from previous chunk to first sub-chunk
+            prefix = prev_tail.strip() + "\n\n" if prev_tail else ""
+            while start < len(para):
+                end = start + target
+                chunk_text = para[start:end].strip()
+                if start == 0 and prefix:
+                    chunk_text = prefix + chunk_text
+                chunks.append({"text": chunk_text, "chunk_type": "text"})
+                prev_tail = para[start:end].strip()[-overlap:]
+                start = end - overlap
+            continue
+
+        if len(current) + len(para) + 2 > target:
+            if current:
+                chunks.append({"text": current.strip(), "chunk_type": "text"})
+                prev_tail = current.strip()[-overlap:]
+            # Start new chunk with overlap from previous
+            overlap_prefix = prev_tail.strip() if prev_tail else ""
+            current = overlap_prefix + "\n\n" + para if overlap_prefix else para
+        else:
+            if not current and prev_tail:
+                # First paragraph of new sequence — prepend overlap
+                overlap_prefix = prev_tail.strip()
+                current = overlap_prefix + "\n\n" + para if overlap_prefix else para
+            else:
+                current = current + "\n\n" + para if current else para
+
+    if current.strip():
+        chunks.append({"text": current.strip(), "chunk_type": "text"})
+
+    return chunks
+
+
 def chunk_pages(pages: list[tuple[int, str]]) -> list[dict]:
-    """Chunk pages into ~800-char segments, tracking page_num per chunk.
+    """Structure-aware chunking with fallback to fixed-size.
 
     pages: [(page_num, text), ...] — 1-indexed page numbers.
-    Each page is chunked independently so every chunk maps to exactly one page.
-    Returns: [{"text": str, "page_num": int}, ...]
+    Returns: [{"text": str, "page_num": int, "chunk_type": str}, ...]
     """
+    try:
+        return _structure_chunk_pages(pages)
+    except Exception:
+        logger.warning("Structure-aware chunking failed, falling back to fixed", exc_info=True)
+        return _fixed_chunk_pages(pages)
+
+
+def _structure_chunk_pages(pages: list[tuple[int, str]]) -> list[dict]:
+    """Structure-aware chunking that respects tables, headings, and text segments."""
+    result = []
+
+    for page_num, page_text in pages:
+        segments = _split_segments(page_text)
+
+        for seg in segments:
+            seg_type = seg["type"]
+            seg_text = seg["text"]
+
+            if seg_type == "table":
+                chunks = _chunk_table(seg_text)
+            elif seg_type == "heading_section":
+                chunks = _chunk_heading_section(seg_text)
+            else:
+                chunks = _chunk_text(seg_text)
+
+            for chunk in chunks:
+                result.append({
+                    "text": chunk["text"],
+                    "page_num": page_num,
+                    "chunk_type": chunk["chunk_type"],
+                })
+
+    MIN_CHUNK = 50
+    return [c for c in result if len(c["text"]) >= MIN_CHUNK]
+
+
+def _fixed_chunk_pages(pages: list[tuple[int, str]]) -> list[dict]:
+    """Original fixed-size chunking — used as fallback."""
     target = 800
     overlap = 150
     result = []
@@ -184,26 +406,33 @@ def chunk_pages(pages: list[tuple[int, str]]) -> list[dict]:
         for para in paragraphs:
             if len(para) > target:
                 if current:
-                    result.append({"text": current.strip(), "page_num": page_num})
+                    chunk = {"text": current.strip(), "page_num": page_num, "chunk_type": "text"}
+                    result.append(chunk)
                     current = ""
                 start = 0
                 while start < len(para):
                     end = start + target
-                    result.append({"text": para[start:end].strip(), "page_num": page_num})
+                    chunk = {
+                        "text": para[start:end].strip(),
+                        "page_num": page_num,
+                        "chunk_type": "text",
+                    }
+                    result.append(chunk)
                     start = end - overlap
                 continue
 
             if len(current) + len(para) + 2 > target:
                 if current:
-                    result.append({"text": current.strip(), "page_num": page_num})
+                    chunk = {"text": current.strip(), "page_num": page_num, "chunk_type": "text"}
+                    result.append(chunk)
                 current = current[-overlap:].strip() + "\n\n" + para if current else para
             else:
                 current = current + "\n\n" + para if current else para
 
         if current.strip():
-            result.append({"text": current.strip(), "page_num": page_num})
+            result.append({"text": current.strip(), "page_num": page_num, "chunk_type": "text"})
 
-    MIN_CHUNK = 50  # discard fragments shorter than this (e.g. tail slivers from hard-splits)
+    MIN_CHUNK = 50
     return [c for c in result if len(c["text"]) >= MIN_CHUNK]
 
 
@@ -214,7 +443,14 @@ def index_document(doc_id: int, pages: list[tuple[int, str]]) -> int:
 
     ids = [f"doc_{doc_id}_chunk_{i}" for i in range(len(chunks))]
     documents = [c["text"] for c in chunks]
-    metadatas = [{"document_id": doc_id, "page_num": c["page_num"]} for c in chunks]
+    metadatas = [
+        {
+            "document_id": doc_id,
+            "page_num": c["page_num"],
+            "chunk_type": c.get("chunk_type", "text"),
+        }
+        for c in chunks
+    ]
 
     collection.upsert(documents=documents, ids=ids, metadatas=metadatas)
     return len(chunks)
@@ -253,6 +489,7 @@ def search_chunks(
             "chunk_text": doc,
             "document_id": meta.get("document_id"),
             "page_num": meta.get("page_num"),  # None for docs indexed before this feature
+            "chunk_type": meta.get("chunk_type", "text"),
             "score": round(1.0 - dist, 4),
         }
         for chunk_id, doc, meta, dist in zip(ids, docs, metadatas, distances)
@@ -294,6 +531,7 @@ def _bm25_search(
             "chunk_text": docs[i],
             "document_id": metadatas[i].get("document_id"),
             "page_num": metadatas[i].get("page_num"),
+            "chunk_type": metadatas[i].get("chunk_type", "text"),
             "score": round(float(s) / max_score, 4),
         }
         for i, s in indexed
