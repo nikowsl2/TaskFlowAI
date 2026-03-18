@@ -322,7 +322,13 @@ def _rrf_merge(
             data[cid] = r
 
     merged = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    return [{**data[cid], "score": round(s, 4)} for cid, s in merged]
+
+    # Normalize to 0-1 so MIN_SCORE threshold stays intuitive
+    max_score = merged[0][1] if merged else 1.0
+    return [
+        {**data[cid], "score": round(s / max_score, 4) if max_score > 0 else 0.0}
+        for cid, s in merged
+    ]
 
 
 def _diversify(ranked: list[dict], n_results: int, max_per_page: int = 2) -> list[dict]:
