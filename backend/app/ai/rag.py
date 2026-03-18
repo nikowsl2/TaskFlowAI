@@ -380,9 +380,16 @@ def smart_search(
     # different pages, not just the top-2 dense summary pages.
     per_query = max(n_results * 2, 8)
 
+    # Track the best semantic (cosine) score per chunk for relevance filtering
+    sem_scores: dict[str, float] = {}
     seen: dict[str, dict] = {}  # chunk_id → best result
     for q in queries:
         semantic = search_chunks(q, document_id, per_query)
+        for r in semantic:
+            cid = r["id"]
+            if cid not in sem_scores or r["score"] > sem_scores[cid]:
+                sem_scores[cid] = r["score"]
+
         bm25 = _bm25_search(q, document_id, per_query)
         merged = _rrf_merge(semantic, bm25)
         for result in merged:
@@ -391,7 +398,11 @@ def smart_search(
                 seen[chunk_id] = result
 
     ranked = sorted(seen.values(), key=lambda r: r["score"], reverse=True)
-    ranked = [r for r in ranked if r["score"] >= MIN_SCORE]
+
+    # Filter on semantic similarity (cosine, 0-1) — not RRF score —
+    # so truly irrelevant chunks are dropped even after rank normalization.
+    ranked = [r for r in ranked if sem_scores.get(r.get("id", ""), 0) >= MIN_SCORE]
+
     for r in ranked:
         r.pop("id", None)
 
