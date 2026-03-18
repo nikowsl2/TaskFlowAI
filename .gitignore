@@ -36,6 +36,9 @@ Thumbs.db
 backend/backend/
 chroma_db/
 
+# Worktrees
+.worktrees/
+
 # Claude
 .claude/
 CLAUDE.md
