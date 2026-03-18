@@ -172,6 +172,13 @@ async def _execute_tools_batch(
             status = "ok" if result_obj.get("ok") else "error"
             tag = " (cached)" if cached else ""
             invocation_log.append(f"{fn_name}{tag} -> {status}: {short_msg}")
+            # Emit tool result to frontend for visibility
+            yield {
+                "type": "tool_result",
+                "name": fn_name,
+                "ok": result_obj.get("ok", True),
+                "message": result_obj.get("message", ""),
+            }
         except json.JSONDecodeError:
             invocation_log.append(f"{fn_name} -> done")
 

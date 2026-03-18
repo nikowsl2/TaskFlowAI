@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { chatApi, meetingApi } from '@/lib/api'
-import { useChatStore, type AttachmentLabel } from '@/store/chatStore'
+import { useChatStore, type AttachmentLabel, type ToolResultEntry } from '@/store/chatStore'
 import { useAttachmentStore, type ContextItem } from '@/store/attachmentStore'
 import { EmailDraftCard, type EmailDraftData } from './EmailDraftCard'
 import ContextPicker from './ContextPicker'
@@ -43,7 +43,64 @@ const markBriefDone = () => {
   catch { /* ignore */ }
 }
 
-function MessageBubble({ role, content, attachments }: { role: string; content: string; attachments?: AttachmentLabel[] }) {
+const TOOL_LABELS: Record<string, string> = {
+  create_task: 'Create task',
+  list_tasks: 'List tasks',
+  update_task: 'Update task',
+  delete_task: 'Delete task',
+  complete_task: 'Complete task',
+  draft_email: 'Draft email',
+  update_email_draft: 'Update draft',
+  get_email_draft: 'Load draft',
+  list_documents: 'List documents',
+  search_documents: 'Search documents',
+  update_user_profile: 'Update profile',
+  list_projects: 'List projects',
+  create_project: 'Create project',
+  log_project_event: 'Log event',
+  recall_project_history: 'Recall history',
+  log_user_memory: 'Save memory',
+  recall_user_context: 'Recall context',
+}
+
+function ToolResultsBlock({ results }: { results: ToolResultEntry[] }) {
+  const [open, setOpen] = useState(false)
+  if (!results.length) return null
+  return (
+    <div className="mb-1 ml-8">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70 transition-colors hover:text-muted-foreground"
+      >
+        <span className={cn('transition-transform text-[9px]', open && 'rotate-90')}>
+          ▶
+        </span>
+        <span className="font-medium">
+          {results.length} tool call{results.length > 1 ? 's' : ''}
+        </span>
+      </button>
+      {open && (
+        <div className="mt-1 space-y-0.5 border-l-2 border-muted-foreground/10 pl-2.5">
+          {results.map((r, i) => (
+            <div key={i} className="flex items-start gap-1.5 text-[11px] leading-relaxed">
+              <span className={r.ok ? 'text-green-500' : 'text-red-400'}>
+                {r.ok ? '✓' : '✗'}
+              </span>
+              <span className="font-medium text-muted-foreground">
+                {TOOL_LABELS[r.name] ?? r.name}
+              </span>
+              <span className="text-muted-foreground/60">
+                {r.message}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MessageBubble({ role, content, attachments, toolResults }: { role: string; content: string; attachments?: AttachmentLabel[]; toolResults?: ToolResultEntry[] }) {
   if (role === 'morning_brief') {
     return (
       <div className="flex items-end gap-2">
@@ -85,23 +142,27 @@ function MessageBubble({ role, content, attachments }: { role: string; content: 
 
   const isUser = role === 'user'
   return (
-    <div className={cn('flex items-end gap-2', isUser && 'flex-row-reverse')}>
-      <div
-        className={cn(
-          'flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-mono text-[8px]',
-          isUser ? 'bg-primary/20 text-primary' : 'bg-surface-2 text-muted-foreground'
-        )}
-      >
-        {isUser ? 'You' : 'TF'}
-      </div>
-      <div
-        className={cn(
-          'max-w-[78%] px-3.5 py-2 text-sm leading-relaxed',
-          isUser
-            ? 'rounded-2xl rounded-br-sm bg-primary text-primary-foreground'
-            : 'rounded-2xl rounded-bl-sm bg-surface text-foreground'
-        )}
-      >
+    <div>
+      {!isUser && toolResults && toolResults.length > 0 && (
+        <ToolResultsBlock results={toolResults} />
+      )}
+      <div className={cn('flex items-end gap-2', isUser && 'flex-row-reverse')}>
+        <div
+          className={cn(
+            'flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-mono text-[8px]',
+            isUser ? 'bg-primary/20 text-primary' : 'bg-surface-2 text-muted-foreground'
+          )}
+        >
+          {isUser ? 'You' : 'TF'}
+        </div>
+        <div
+          className={cn(
+            'max-w-[78%] px-3.5 py-2 text-sm leading-relaxed',
+            isUser
+              ? 'rounded-2xl rounded-br-sm bg-primary text-primary-foreground'
+              : 'rounded-2xl rounded-bl-sm bg-surface text-foreground'
+          )}
+        >
         {isUser && attachments && attachments.length > 0 && (
           <div className="mb-1.5 flex flex-wrap gap-1">
             {attachments.map((a, i) => (
@@ -116,6 +177,7 @@ function MessageBubble({ role, content, attachments }: { role: string; content: 
           </div>
         )}
         <pre className="whitespace-pre-wrap font-sans text-[13px]">{content}</pre>
+      </div>
       </div>
     </div>
   )
@@ -156,7 +218,7 @@ interface ChatPanelProps {
 export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanelProps) {
   const qc = useQueryClient()
   const { messages, isLoading, addMessage, updateLastAssistantMessage,
-          updateLastBriefMessage, setMessages, setLoading } = useChatStore()
+          updateLastBriefMessage, appendToolResult, setMessages, setLoading } = useChatStore()
   const [input, setInput] = useState('')
   const [statusText, setStatusText] = useState<string | null>(null)
   const [isBriefLoading, setIsBriefLoading] = useState(false)
@@ -363,6 +425,12 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
                 setStatusText(null)
                 accumulated += data.content
                 updateLastAssistantMessage(accumulated)
+              } else if (data.type === 'tool_result') {
+                appendToolResult({
+                  name: data.name,
+                  ok: data.ok,
+                  message: data.message,
+                })
               } else if (data.type === 'status') {
                 setStatusText(data.content)
               } else if (data.type === 'email_draft') {
@@ -475,7 +543,7 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
               (msg.role === 'assistant' && msg.content === '' && isLoading) || (msg.role === 'morning_brief' && msg.content === '' && isBriefLoading) ? (
                 <TypingIndicator key={msg.id} />
               ) : (
-                <MessageBubble key={msg.id} role={msg.role} content={msg.content} attachments={msg.attachments} />
+                <MessageBubble key={msg.id} role={msg.role} content={msg.content} attachments={msg.attachments} toolResults={msg.toolResults} />
               )
             )}
           </div>

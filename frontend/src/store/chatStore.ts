@@ -5,11 +5,18 @@ export interface AttachmentLabel {
   label: string
 }
 
+export interface ToolResultEntry {
+  name: string
+  ok: boolean
+  message: string
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'email_draft' | 'morning_brief'
   content: string
   attachments?: AttachmentLabel[]
+  toolResults?: ToolResultEntry[]
 }
 
 interface ChatState {
@@ -18,6 +25,7 @@ interface ChatState {
   addMessage: (msg: ChatMessage) => void
   updateLastAssistantMessage: (content: string) => void
   updateLastBriefMessage: (content: string) => void
+  appendToolResult: (entry: ToolResultEntry) => void
   setMessages: (msgs: ChatMessage[]) => void
   setLoading: (v: boolean) => void
 }
@@ -32,6 +40,18 @@ export const useChatStore = create<ChatState>((set) => ({
       for (let i = msgs.length - 1; i >= 0; i--) {
         if (msgs[i].role === 'assistant') {
           msgs[i] = { ...msgs[i], content }
+          break
+        }
+      }
+      return { messages: msgs }
+    }),
+  appendToolResult: (entry) =>
+    set((s) => {
+      const msgs = [...s.messages]
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].role === 'assistant') {
+          const existing = msgs[i].toolResults ?? []
+          msgs[i] = { ...msgs[i], toolResults: [...existing, entry] }
           break
         }
       }
