@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { chatApi, meetingApi } from '@/lib/api'
-import { useChatStore, type AttachmentLabel, type ToolResultEntry } from '@/store/chatStore'
+import { useChatStore, type AttachmentLabel, type FaithfulnessResult, type ToolResultEntry } from '@/store/chatStore'
 import { useAttachmentStore, type ContextItem } from '@/store/attachmentStore'
 import { EmailDraftCard, type EmailDraftData } from './EmailDraftCard'
 import ContextPicker from './ContextPicker'
@@ -100,7 +100,46 @@ function ToolResultsBlock({ results }: { results: ToolResultEntry[] }) {
   )
 }
 
-function MessageBubble({ role, content, attachments, toolResults }: { role: string; content: string; attachments?: AttachmentLabel[]; toolResults?: ToolResultEntry[] }) {
+function FaithfulnessIndicator({ result }: { result: FaithfulnessResult }) {
+  const [expanded, setExpanded] = useState(false)
+  const config = {
+    faithful: { bg: 'bg-green-500/10', text: 'text-green-600 dark:text-green-400', label: 'Grounded in sources' },
+    partial: { bg: 'bg-amber-500/10', text: 'text-amber-600 dark:text-amber-400', label: 'Partially grounded' },
+    unfaithful: { bg: 'bg-red-500/10', text: 'text-red-600 dark:text-red-400', label: 'May contain unsupported claims' },
+  }
+  const c = config[result.verdict] ?? config.unfaithful
+  const hasFlags = result.flags && result.flags.length > 0
+
+  return (
+    <div className="ml-8 mt-1">
+      <button
+        onClick={() => hasFlags && setExpanded(!expanded)}
+        className={cn(
+          'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors',
+          c.bg, c.text,
+          hasFlags && 'cursor-pointer hover:opacity-80'
+        )}
+      >
+        <span className="h-1.5 w-1.5 rounded-full bg-current" />
+        {c.label}
+        {hasFlags && (
+          <span className="opacity-60">({result.flags.length})</span>
+        )}
+      </button>
+      {expanded && hasFlags && (
+        <div className="mt-1 space-y-0.5 border-l-2 border-muted-foreground/10 pl-2.5">
+          {result.flags.map((flag, i) => (
+            <div key={i} className="text-[11px] text-muted-foreground/70">
+              {flag}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MessageBubble({ role, content, attachments, toolResults, faithfulness }: { role: string; content: string; attachments?: AttachmentLabel[]; toolResults?: ToolResultEntry[]; faithfulness?: FaithfulnessResult }) {
   if (role === 'morning_brief') {
     return (
       <div className="flex items-end gap-2">
@@ -179,6 +218,7 @@ function MessageBubble({ role, content, attachments, toolResults }: { role: stri
         <pre className="whitespace-pre-wrap font-sans text-[13px]">{content}</pre>
       </div>
       </div>
+      {!isUser && faithfulness && <FaithfulnessIndicator result={faithfulness} />}
     </div>
   )
 }
@@ -218,7 +258,8 @@ interface ChatPanelProps {
 export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanelProps) {
   const qc = useQueryClient()
   const { messages, isLoading, addMessage, updateLastAssistantMessage,
-          updateLastBriefMessage, appendToolResult, setMessages, setLoading } = useChatStore()
+          updateLastBriefMessage, appendToolResult, setLastAssistantFaithfulness,
+          setMessages, setLoading } = useChatStore()
   const [input, setInput] = useState('')
   const [statusText, setStatusText] = useState<string | null>(null)
   const [isBriefLoading, setIsBriefLoading] = useState(false)
@@ -439,6 +480,8 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
                   role: 'email_draft',
                   content: JSON.stringify(data.data),
                 })
+              } else if (data.type === 'faithfulness') {
+                setLastAssistantFaithfulness(data.data)
               } else if (data.type === 'done') {
                 qc.invalidateQueries({ queryKey: ['tasks'] })
                 qc.invalidateQueries({ queryKey: ['events'] })
@@ -543,7 +586,7 @@ export default function ChatPanel({ onSwitchMode, onClose, floating }: ChatPanel
               (msg.role === 'assistant' && msg.content === '' && isLoading) || (msg.role === 'morning_brief' && msg.content === '' && isBriefLoading) ? (
                 <TypingIndicator key={msg.id} />
               ) : (
-                <MessageBubble key={msg.id} role={msg.role} content={msg.content} attachments={msg.attachments} toolResults={msg.toolResults} />
+                <MessageBubble key={msg.id} role={msg.role} content={msg.content} attachments={msg.attachments} toolResults={msg.toolResults} faithfulness={msg.faithfulness} />
               )
             )}
           </div>

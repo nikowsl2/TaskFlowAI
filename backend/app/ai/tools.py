@@ -762,10 +762,21 @@ async def _dispatch(name: str, args: dict, db: Session) -> ToolResult:
             type_label = " [Table]" if chunk_type == "table" else ""
             r["source"] = f"Page {page_num}{type_label} — {filename}" if page_num else filename
 
+        # Number each result for citation
+        for i, r in enumerate(results):
+            r["index"] = i + 1
+
+        # Build references block for the LLM
+        references = [f"[{r['index']}] {r['source']}" for r in results]
+        references_block = "\nReferences:\n" + "\n".join(references) if references else ""
+
         return ToolResult(
             ok=True,
-            message=f"Found {len(results)} chunk(s) for query: '{inp.query}'",
-            data={"results": results},
+            message=(
+                f"Found {len(results)} chunk(s) for query: '{inp.query}'\n\n"
+                f"Use [N] inline citations in your answer.{references_block}"
+            ),
+            data={"results": results, "references": references},
         )
 
     if name == "update_user_profile":

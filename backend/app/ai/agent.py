@@ -14,6 +14,23 @@ from app.models import UserProfile
 
 MAX_TOOL_ROUNDS = 20
 
+FAITHFULNESS_PROMPT = """\
+You are a factual accuracy auditor. Given source chunks and an AI response, \
+assess whether every factual claim in the response is supported by the chunks.
+
+Rules:
+- "supported" = a chunk contains the same or equivalent information.
+- "unsupported" = no chunk backs the claim.
+- Ignore greetings, caveats, and "I don't have information" disclaimers — those are fine.
+- If the response correctly says info is unavailable, that is faithful.
+
+Return ONLY a JSON object:
+{"score": <0.0-1.0>, "verdict": "<faithful|partial|unfaithful>", "flags": ["<unsupported claim>"]}
+
+score >= 0.7 → "faithful", 0.4-0.7 → "partial", < 0.4 → "unfaithful"
+flags: up to 3 specific unsupported claims (empty list if faithful)
+"""
+
 # Tools that only read data — safe to cache within a single agent invocation.
 READ_ONLY_TOOLS = frozenset({
     "list_tasks", "list_projects", "list_documents", "search_documents",
@@ -70,8 +87,35 @@ Email drafting:
 
 Document knowledge base:
 1. ALWAYS call list_documents first — never guess document IDs.
-2. Call search_documents with focused query and correct document_id.
-3. Cite sources (e.g. "Source: Page 4 — file.pdf"). Try multiple query phrasings for complex questions.
+2. Call search_documents with focused query and correct document_id. \
+Try multiple phrasings for complex questions.
+3. GROUNDING RULES (mandatory when answering from documents):
+   - Use ONLY information from the retrieved chunks. Do NOT supplement \
+with prior knowledge, extrapolate, or infer beyond what chunks state.
+   - If chunks do not contain enough info, say: "The retrieved sections \
+do not cover [topic]. Try a different query or check if the document is uploaded."
+   - Never fabricate statistics, dates, names, or figures not in chunks.
+   - Use numbered inline citations [1], [2] matching the References list. \
+End your answer with a "References:" section listing all cited sources.
+
+<example title="Grounded answer with citations">
+User: What was NVIDIA's quarterly revenue?
+[search_documents returns chunks about Q3 financials]
+Assistant: NVIDIA reported quarterly revenue of $68 billion, \
+a 73% YoY increase [1]. Data Center was the primary driver at $62B [2].
+
+References:
+[1] Page 4 — nvidia_earnings.pdf
+[2] Page 6 — nvidia_earnings.pdf
+</example>
+
+<example title="Insufficient information — refuse gracefully">
+User: What is the company's remote work policy?
+[search_documents returns chunks about office locations only]
+Assistant: The retrieved sections do not cover remote work policy — \
+they discuss office locations. Try a different query or check if \
+an HR policy document has been uploaded.
+</example>
 """
 
 
@@ -116,6 +160,75 @@ def _build_system_prompt(db: Session) -> str:
         profile=profile_text,
         summary=summary_text,
     )
+
+
+def _extract_rag_chunks(batch: list[dict]) -> list[str]:
+    """Extract chunk texts from search_documents results in a batch."""
+    chunks: list[str] = []
+    for item in batch:
+        if item["name"] == "search_documents":
+            try:
+                parsed = json.loads(item["result"])
+                if parsed.get("ok") and parsed.get("data", {}).get("results"):
+                    chunks.extend(
+                        r["chunk_text"] for r in parsed["data"]["results"]
+                        if r.get("chunk_text")
+                    )
+            except (json.JSONDecodeError, KeyError):
+                pass
+    return chunks
+
+
+async def _verify_faithfulness(
+    response_text: str, rag_chunks: list[str]
+) -> dict | None:
+    """Run a lightweight LLM call to verify response faithfulness against chunks.
+
+    Returns {"score": float, "verdict": str, "flags": list[str]} or None on error.
+    """
+    if not rag_chunks or not response_text.strip():
+        return None
+
+    # Truncate to keep verification call small
+    truncated_chunks = [c[:500] for c in rag_chunks[:8]]
+    truncated_response = response_text[:2000]
+
+    user_msg = (
+        f"Source chunks:\n{json.dumps(truncated_chunks, ensure_ascii=False)}\n\n"
+        f"AI response:\n{truncated_response}"
+    )
+
+    try:
+        if settings.AI_PROVIDER == "anthropic":
+            from anthropic import AsyncAnthropic
+
+            client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+            result = await client.messages.create(
+                model=settings.AI_MODEL,
+                max_tokens=200,
+                temperature=0,
+                system=FAITHFULNESS_PROMPT,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+            raw = result.content[0].text
+        else:
+            from openai import AsyncOpenAI
+
+            client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+            result = await client.chat.completions.create(
+                model=settings.AI_MODEL,
+                max_tokens=200,
+                temperature=0,
+                messages=[
+                    {"role": "system", "content": FAITHFULNESS_PROMPT},
+                    {"role": "user", "content": user_msg},
+                ],
+            )
+            raw = result.choices[0].message.content or ""
+
+        return json.loads(raw)
+    except Exception:
+        return None
 
 
 async def _execute_tools_batch(
@@ -210,6 +323,7 @@ async def _openai_loop(
     tool_call_count = 0
     tool_cache: dict[str, str] = {}
     invocation_log: list[str] = []
+    rag_chunks: list[str] = []
 
     log_store.log(log_store.AGENT_START, {"provider": "openai", "model": settings.AI_MODEL})
 
@@ -257,6 +371,10 @@ async def _openai_loop(
 
             if not tool_calls_raw:
                 log_store.log(log_store.AGENT_DONE, {"tool_calls": tool_call_count, "response_len": len(collected_text)})
+                if settings.RAG_VERIFY_FAITHFULNESS and rag_chunks and collected_text.strip():
+                    verification = await _verify_faithfulness(collected_text, rag_chunks)
+                    if verification:
+                        yield {"type": "faithfulness", "data": verification}
                 yield {"type": "done"}
                 return
 
@@ -278,6 +396,8 @@ async def _openai_loop(
             async for chunk in _execute_tools_batch(batch, db, tool_cache, invocation_log):
                 yield chunk
             tool_call_count += len(batch)
+
+            rag_chunks.extend(_extract_rag_chunks(batch))
 
             for item in batch:
                 msgs.append({"role": "tool", "tool_call_id": item["id"], "content": item["result"]})
@@ -305,6 +425,7 @@ async def _anthropic_loop(
     tool_call_count = 0
     tool_cache: dict[str, str] = {}
     invocation_log: list[str] = []
+    rag_chunks: list[str] = []
 
     log_store.log(log_store.AGENT_START, {"provider": "anthropic", "model": settings.AI_MODEL})
 
@@ -358,6 +479,10 @@ async def _anthropic_loop(
 
             if not tool_uses:
                 log_store.log(log_store.AGENT_DONE, {"tool_calls": tool_call_count, "response_len": len(collected_text)})
+                if settings.RAG_VERIFY_FAITHFULNESS and rag_chunks and collected_text.strip():
+                    verification = await _verify_faithfulness(collected_text, rag_chunks)
+                    if verification:
+                        yield {"type": "faithfulness", "data": verification}
                 yield {"type": "done"}
                 return
 
@@ -376,6 +501,8 @@ async def _anthropic_loop(
             async for chunk in _execute_tools_batch(batch, db, tool_cache, invocation_log):
                 yield chunk
             tool_call_count += len(batch)
+
+            rag_chunks.extend(_extract_rag_chunks(batch))
 
             tool_results = [
                 {"type": "tool_result", "tool_use_id": item["id"], "content": item["result"]}

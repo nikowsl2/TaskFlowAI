@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./taskflow.db"
     FRONTEND_URL: str = "http://localhost:5173"
     CHROMA_DB_PATH: str = _DEFAULT_CHROMA
+    RAG_VERIFY_FAITHFULNESS: bool = True
 
 
 settings = Settings()
