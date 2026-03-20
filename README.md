@@ -50,29 +50,44 @@ sequenceDiagram
 ```
 
 ### Document Knowledge Base (RAG)
-- Upload documents (TXT, DOCX, PDF, MD, CSV) up to 20 MB
+- Upload documents (TXT, DOCX, PDF, MD, CSV) up to 20 MB via drag-and-drop
 - AI-generated summaries on upload
-- Semantic search with BM25 + embedding reranking and source citations
+- **Structure-aware chunking** — tables, headings, and text are segmented separately; tables kept atomic (up to 1600 chars); headings stay attached to their first paragraph; fixed-size fallback (800 chars, 150 overlap) with chunks < 50 chars discarded
+- **Enriched extraction** — PDF via PyMuPDF with font-size heading detection, table extraction, and OCR fallback; DOCX extracts paragraphs + tables; CSV converted to markdown tables
+- **LLM query rewriting** — rewrites user queries into 2–3 search-optimized variants grounded in the document summary; short queries (≤ 4 words) skip rewriting
+- **Hybrid search** — each query variant runs semantic search (OpenAI `text-embedding-3-small` / ChromaDB cosine) + BM25 keyword search in parallel
+- **Reciprocal Rank Fusion (RRF)** — merges semantic and BM25 ranked lists per variant (k=60), then deduplicates across variants keeping the best score
+- **Post-processing** — filters by cosine similarity (MIN_SCORE 0.25), diversifies results (max 2 per page to avoid dense-section bias), returns top-N
+- **Faithfulness verification** — grounded generation with numbered inline citations `[1]`, `[2]`; post-streaming LLM check scores faithfulness (green/amber/red indicator in chat UI)
 
 ```mermaid
 graph LR
     subgraph Ingestion [Ingestion Pipeline]
-        Doc[Upload PDF/Notes/Event] --> Parser[Text Extraction & Chunking]
+        Doc[Upload PDF/DOCX/CSV/TXT/MD] --> Extract[Enriched Text Extraction]
+        Extract --> Segment[Structure-Aware Segmentation<br/>tables · headings · text]
+        Segment --> Chunk[Chunking<br/>800 char target · 150 overlap]
     end
 
     subgraph Storage [Dual-Database Storage]
-        Meta[Generate Metadata & AI Summary] --> SQL[(SQLite)]
-        Embed[Generate Vector Embeddings] --> Chroma[(ChromaDB)]
+        Meta[Metadata & AI Summary] --> SQL[(SQLite)]
+        Embed[Embeddings<br/>text-embedding-3-small] --> Chroma[(ChromaDB)]
     end
 
-    subgraph Retrieval [Agentic Retrieval]
-        Agent{AI Agent} -->|1. List available files/projects| SQL
-        Agent -->|2. Semantic Search Specific ID| Chroma
+    subgraph Retrieval [Hybrid Retrieval Pipeline]
+        Query[User Query] --> Rewrite[LLM Query Rewriting<br/>2-3 variants]
+        Rewrite --> Sem[Semantic Search<br/>cosine similarity]
+        Rewrite --> BM25[BM25 Keyword Search]
+        Sem --> RRF[Reciprocal Rank Fusion<br/>k=60]
+        BM25 --> RRF
+        RRF --> Dedup[Dedup & Score Filter<br/>MIN_SCORE 0.25]
+        Dedup --> Diversify[Page Diversification<br/>max 2 per page]
     end
 
-    Parser --> Meta
-    Parser --> Embed
-    SQL -.->|Document/Project ID links to chunks| Chroma
+    Chunk --> Meta
+    Chunk --> Embed
+    SQL -.->|Document ID links to chunks| Chroma
+    Chroma --> Sem
+    Chroma --> BM25
 
     classDef core fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px;
     class SQL,Chroma core;
