@@ -437,7 +437,16 @@ TOOL_DEFINITIONS = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "integer", "description": "Project ID."},
-                    "query": {"type": "string", "description": "What to search for in project history."},
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "Specific search query targeting episode "
+                            "content — use concrete nouns and verbs "
+                            "from the user's question (e.g. 'budget "
+                            "increase decision' not 'activities'). "
+                            "More specific queries rank better."
+                        ),
+                    },
                     "n_results": {"type": "integer", "description": "Max episodes to return (default 5)."},
                 },
                 "required": ["project_id", "query"],

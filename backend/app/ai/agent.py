@@ -67,7 +67,12 @@ before passing to any tool — never pass relative strings like "next Wednesday"
 Field routing: role/team → role_and_goals; style/workflows → preferences; sprint/milestone → current_focus; misc → extra_notes.
 5. Call log_project_event after milestones, decisions, blockers, or scope changes. \
 Call list_projects first for IDs; offer to create a project if none exists.
-6. Call recall_project_history before answering questions about past project work. List projects first.
+6. Call recall_project_history before answering questions about past \
+project work. List projects first. Use a specific, content-focused \
+query — echo the user's key nouns/verbs (e.g. "budget increase \
+meeting" not "recent activities"). For broad requests like "tell me \
+everything", call with a general query then follow up with targeted \
+queries if needed.
 7. AMBIGUITY: Never guess which task/project the user means with vague references. \
 Call list_tasks/list_projects, present numbered options, wait for confirmation before acting.
 8. Call log_user_memory when the user shares personal anecdotes or recurring patterns. \

@@ -90,21 +90,40 @@ def log_episode(project_id: int, memory_text: str) -> str:
 def recall_episodes(project_id: int, query: str, n_results: int = 5) -> list[dict]:
     try:
         col = _get_episodic_collection()
-        results = col.query(
-            query_texts=[query],
-            n_results=n_results,
-            where={"project_id": project_id},
-            include=["documents", "metadatas", "distances"],
-        )
-        docs = results.get("documents", [[]])[0]
-        metas = results.get("metadatas", [[]])[0]
-        dists = results.get("distances", [[]])[0]
-        # No score filter: results are already scoped by project_id,
-        # so all returned episodes are relevant.  Semantic search ranks
-        # them by relevance; the caller controls n_results.
+
+        # Rewrite query into 2-3 search-optimized variants (reuses RAG rewriter)
+        try:
+            from app.ai.rag import rewrite_queries
+
+            queries = rewrite_queries(query)
+        except Exception:
+            logger.debug("Query rewriting unavailable, using original query")
+            queries = [query]
+
+        # Run each variant against ChromaDB, collect all results
+        seen_texts: set[str] = set()
+        all_episodes: list[tuple[str, dict, float]] = []
+
+        for q in queries:
+            results = col.query(
+                query_texts=[q],
+                n_results=n_results,
+                where={"project_id": project_id},
+                include=["documents", "metadatas", "distances"],
+            )
+            docs = results.get("documents", [[]])[0]
+            metas = results.get("metadatas", [[]])[0]
+            dists = results.get("distances", [[]])[0]
+            for d, m, dist in zip(docs, metas, dists):
+                if d not in seen_texts:
+                    seen_texts.add(d)
+                    all_episodes.append((d, m, dist))
+
+        # Sort by distance (lower = more relevant in cosine space) and cap
+        all_episodes.sort(key=lambda x: x[2])
         return [
             {"text": d, "metadata": m}
-            for d, m, dist in zip(docs, metas, dists)
+            for d, m, _ in all_episodes[:n_results]
         ]
     except Exception:
         logger.exception("recall_episodes failed")
