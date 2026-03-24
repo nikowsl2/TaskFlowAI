@@ -1,15 +1,62 @@
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from functools import lru_cache
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 EPISODIC_COLLECTION = "taskflow_episodes"
 USER_MEMORIES_COLLECTION = "taskflow_user_memories"
 
 MIN_MEMORY_SCORE = 0.35  # Filter out low-relevance recall results (1 - cosine distance)
+
+_COSINE_META = {"hnsw:space": "cosine"}
+
+
+def _ensure_cosine_space(client, name: str, embedding_function) -> None:  # noqa: ANN001
+    """Recreate a collection with cosine space if it was created with the default (L2).
+
+    ChromaDB's get_or_create_collection does not update metadata on an existing
+    collection, so collections created before the cosine metadata was added are
+    stuck on L2 distance.  This migrates them in-place: back up data, delete,
+    recreate with cosine, and re-insert.
+    """
+    try:
+        existing = client.get_collection(name)
+    except Exception:
+        return  # Collection doesn't exist yet — get_or_create will handle it
+
+    if existing.metadata and existing.metadata.get("hnsw:space") == "cosine":
+        return  # Already correct
+
+    count = existing.count()
+    if count == 0:
+        client.delete_collection(name)
+        logger.info("Deleted empty collection %s to recreate with cosine space", name)
+        return
+
+    # Back up all data
+    backup = existing.get(include=["documents", "metadatas", "embeddings"])
+    ids = backup["ids"]
+    docs = backup["documents"]
+    metas = backup["metadatas"]
+    embeds = backup["embeddings"]
+
+    # Delete and recreate with cosine
+    client.delete_collection(name)
+    new_col = client.get_or_create_collection(
+        name, embedding_function=embedding_function, metadata=_COSINE_META
+    )
+
+    # Re-insert with original embeddings to avoid re-computing them
+    new_col.upsert(ids=ids, documents=docs, metadatas=metas, embeddings=embeds)
+    logger.info(
+        "Migrated collection %s to cosine space (%d items preserved)", name, len(ids)
+    )
 
 
 @lru_cache(maxsize=1)
@@ -25,10 +72,11 @@ def _get_episodic_collection():
         model_name="text-embedding-3-small",
     )
     client = chromadb.PersistentClient(path=settings.CHROMA_DB_PATH)
+    _ensure_cosine_space(client, EPISODIC_COLLECTION, ef)
     return client.get_or_create_collection(
         EPISODIC_COLLECTION,
         embedding_function=ef,
-        metadata={"hnsw:space": "cosine"},
+        metadata=_COSINE_META,
     )
 
 
@@ -61,6 +109,7 @@ def recall_episodes(project_id: int, query: str, n_results: int = 5) -> list[dic
             if (1.0 - dist) >= MIN_MEMORY_SCORE
         ]
     except Exception:
+        logger.exception("recall_episodes failed")
         return []
 
 
@@ -118,10 +167,11 @@ def _get_user_memory_collection():
         model_name="text-embedding-3-small",
     )
     client = chromadb.PersistentClient(path=settings.CHROMA_DB_PATH)
+    _ensure_cosine_space(client, USER_MEMORIES_COLLECTION, ef)
     return client.get_or_create_collection(
         USER_MEMORIES_COLLECTION,
         embedding_function=ef,
-        metadata={"hnsw:space": "cosine"},
+        metadata=_COSINE_META,
     )
 
 
