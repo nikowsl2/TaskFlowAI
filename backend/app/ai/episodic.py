@@ -17,47 +17,46 @@ MIN_MEMORY_SCORE = 0.35  # Filter out low-relevance recall results (1 - cosine d
 _COSINE_META = {"hnsw:space": "cosine"}
 
 
-def _rebuild_collection(client, name: str, embedding_function):  # noqa: ANN001, ANN202
-    """Build (or rebuild) a collection guaranteeing cosine distance space.
+def _ensure_cosine_space(client, name: str, embedding_function) -> None:  # noqa: ANN001
+    """Recreate a collection with cosine space if it was created with the default (L2).
 
     ChromaDB's get_or_create_collection does not update metadata on an existing
-    collection, and cross-process state is unreliable (metadata may read as
-    cosine while the HNSW index still uses L2).  Since both distance metrics
-    fall in [0, 2] for normalised vectors, there is no way to detect the
-    mismatch by probing.
-
-    The safe approach: always back up → delete → recreate with cosine → restore.
-    For small episodic/user-memory collections (typically < 100 items) this adds
-    negligible startup cost and guarantees correctness.  Returns the collection
-    directly so callers never touch a stale client-cached object.
+    collection, so collections created before the cosine metadata was added are
+    stuck on L2 distance.  This migrates them in-place: back up data, delete,
+    recreate with cosine, and re-insert.
     """
-    # Collect existing data (if any) before deleting
-    backup = None
     try:
-        existing = client.get_collection(name, embedding_function=embedding_function)
-        count = existing.count()
-        if count > 0:
-            backup = existing.get(include=["documents", "metadatas", "embeddings"])
-        client.delete_collection(name)
+        existing = client.get_collection(name)
     except Exception:
-        pass  # Collection doesn't exist yet
+        return  # Collection doesn't exist yet — get_or_create will handle it
 
-    # Create fresh collection with cosine space
-    col = client.create_collection(
+    if existing.metadata and existing.metadata.get("hnsw:space") == "cosine":
+        return  # Already correct
+
+    count = existing.count()
+    if count == 0:
+        client.delete_collection(name)
+        logger.info("Deleted empty collection %s to recreate with cosine space", name)
+        return
+
+    # Back up all data
+    backup = existing.get(include=["documents", "metadatas", "embeddings"])
+    ids = backup["ids"]
+    docs = backup["documents"]
+    metas = backup["metadatas"]
+    embeds = backup["embeddings"]
+
+    # Delete and recreate with cosine
+    client.delete_collection(name)
+    new_col = client.get_or_create_collection(
         name, embedding_function=embedding_function, metadata=_COSINE_META
     )
 
-    # Restore backed-up data
-    if backup and backup["ids"]:
-        col.upsert(
-            ids=backup["ids"],
-            documents=backup["documents"],
-            metadatas=backup["metadatas"],
-            embeddings=backup["embeddings"],
-        )
-        logger.info("Rebuilt collection %s with cosine space (%d items)", name, len(backup["ids"]))
-
-    return col
+    # Re-insert with original embeddings to avoid re-computing them
+    new_col.upsert(ids=ids, documents=docs, metadatas=metas, embeddings=embeds)
+    logger.info(
+        "Migrated collection %s to cosine space (%d items preserved)", name, len(ids)
+    )
 
 
 @lru_cache(maxsize=1)
@@ -73,7 +72,12 @@ def _get_episodic_collection():
         model_name="text-embedding-3-small",
     )
     client = chromadb.PersistentClient(path=settings.CHROMA_DB_PATH)
-    return _rebuild_collection(client, EPISODIC_COLLECTION, ef)
+    _ensure_cosine_space(client, EPISODIC_COLLECTION, ef)
+    return client.get_or_create_collection(
+        EPISODIC_COLLECTION,
+        embedding_function=ef,
+        metadata=_COSINE_META,
+    )
 
 
 def log_episode(project_id: int, memory_text: str) -> str:
@@ -184,7 +188,12 @@ def _get_user_memory_collection():
         model_name="text-embedding-3-small",
     )
     client = chromadb.PersistentClient(path=settings.CHROMA_DB_PATH)
-    return _rebuild_collection(client, USER_MEMORIES_COLLECTION, ef)
+    _ensure_cosine_space(client, USER_MEMORIES_COLLECTION, ef)
+    return client.get_or_create_collection(
+        USER_MEMORIES_COLLECTION,
+        embedding_function=ef,
+        metadata=_COSINE_META,
+    )
 
 
 def log_user_memory(memory_text: str) -> str:
